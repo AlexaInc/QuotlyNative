@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {
+      "text": "Hello, this is a **bold** message from the C++ API!",
+      "entities": [
+        { "offset": 23, "length": 8, "type": "bold" }
+      ],
+      "from": {
+        "id": 12345,
+        "first_name": "Test",
+        "last_name": "User",
+        "username": "testuser"
+      }
+    }
+  ],
+  "transparent": true
+}

@@ -1,55 +1,241 @@
-FROM node:18
+# Build stage
+FROM debian:bookworm-slim AS builder
 
-# Install system dependencies for Canvas, Puppeteer and Git
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
-    git \
-    libcairo2-dev \
-    libjpeg-dev \
-    libpango1.0-dev \
-    libgif-dev \
     build-essential \
-    g++ \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libxshmfence1 \
+    cmake \
+    git \
+    wget \
+    curl \
+    unzip \
+    pkg-config \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libnlohmann-json-dev \
+    libcurl4-openssl-dev \
+    # TDLib dependencies
+    gperf \
+    libssl-dev \
+    zlib1g-dev \
+    --no-install-recommends
+
+# Build TDLib
+RUN git clone https://github.com/tdlib/td.git /tmp/td && \
+    cd /tmp/td && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    cmake --build . --target tdjson -j$(nproc) && \
+    cmake --install . && \
+    rm -rf /tmp/td
+
+# Copy source OR clone from GitHub (as requested)
+WORKDIR /app
+RUN git clone https://github.com/AlexaInc/QuotlyNative.git .
+
+RUN mkdir build && cd build && \
+    cmake .. && \
+    make -j$(nproc)
+
+# Final stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies and the COMPREHENSIVE FONT STACK
+RUN apt-get update && apt-get install -y \
+    libcairo2 \
+    libpango-1.0-0 \
+    fontconfig \
+    wget \
+    curl \
+    unzip \
+    # ── Full Font List from quotlyliteapi ──
     fonts-noto \
-    fonts-noto-cjk \
-    fonts-noto-color-emoji \
+    fonts-noto-core \
+    fonts-noto-extra \
     fonts-noto-ui-core \
-    chromium \
-    python3 \
+    fonts-noto-ui-extra \
+    fonts-noto-cjk \
+    fonts-noto-cjk-extra \
+    fonts-noto-color-emoji \
+    fonts-noto-mono \
+    fonts-dejavu \
+    fonts-dejavu-core \
+    fonts-dejavu-extra \
+    fonts-liberation \
+    fonts-liberation2 \
+    fonts-freefont-ttf \
+    fonts-freefont-otf \
+    fonts-symbola \
+    fonts-ancient-scripts \
+    fonts-unifont \
+    fonts-arabeyes \
+    fonts-hosny-amiri \
+    fonts-kacst \
+    fonts-kacst-one \
+    fonts-sil-scheherazade \
+    fonts-sil-lateef \
+    fonts-hosny-thabit \
+    fonts-farsiweb \
+    fonts-nafees \
+    fonts-deva \
+    fonts-beng \
+    fonts-gujr \
+    fonts-knda \
+    fonts-mlym \
+    fonts-orya \
+    fonts-guru \
+    fonts-taml \
+    fonts-telu \
+    fonts-lklug-sinhala \
+    fonts-lohit-deva \
+    fonts-lohit-beng-assamese \
+    fonts-lohit-beng-bengali \
+    fonts-lohit-gujr \
+    fonts-lohit-knda \
+    fonts-lohit-mlym \
+    fonts-lohit-orya \
+    fonts-lohit-guru \
+    fonts-lohit-taml \
+    fonts-lohit-taml-classical \
+    fonts-lohit-telu \
+    fonts-pagul \
+    fonts-samyak-deva \
+    fonts-samyak-gujr \
+    fonts-samyak-mlym \
+    fonts-samyak-taml \
+    fonts-sarai \
+    fonts-smc \
+    fonts-yrsa-rasa \
+    fonts-tibetan-machine \
+    fonts-tlwg-garuda \
+    fonts-tlwg-kinnari \
+    fonts-tlwg-laksaman \
+    fonts-tlwg-loma \
+    fonts-tlwg-mono \
+    fonts-tlwg-norasi \
+    fonts-tlwg-purisa \
+    fonts-tlwg-sawasdee \
+    fonts-tlwg-typewriter \
+    fonts-tlwg-typist \
+    fonts-tlwg-typo \
+    fonts-tlwg-umpush \
+    fonts-tlwg-waree \
+    fonts-khmeros \
+    fonts-lao \
+    fonts-sil-padauk \
+    fonts-sil-mondulkiri \
+    fonts-sil-charis \
+    fonts-sil-gentium \
+    fonts-sil-gentium-basic \
+    fonts-sil-abyssinica \
+    fonts-sil-ezra \
+    fonts-sil-andika \
+    fonts-sil-doulos \
+    fonts-arphic-ukai \
+    fonts-arphic-uming \
+    fonts-vlgothic \
+    fonts-takao \
+    fonts-takao-gothic \
+    fonts-takao-mincho \
+    fonts-ipafont \
+    fonts-ipafont-gothic \
+    fonts-ipafont-mincho \
+    fonts-ipaexfont \
+    fonts-ipaexfont-gothic \
+    fonts-ipaexfont-mincho \
+    fonts-unfonts-core \
+    fonts-unfonts-extra \
+    fonts-nanum \
+    fonts-nanum-coding \
+    fonts-nanum-extra \
+    fonts-baekmuk \
+    fonts-wqy-microhei \
+    fonts-wqy-zenhei \
+    culmus \
+    culmus-fancy \
+    fonts-bpg-georgian \
+    fonts-droid-fallback \
+    fonts-roboto \
+    fonts-cantarell \
+    fonts-open-sans \
+    fonts-firacode \
+    fonts-jetbrains-mono \
+    fonts-inconsolata \
+    fonts-mononoki \
+    fonts-mathjax \
+    fonts-stix \
+    fonts-lyx \
+    fonts-texgyre \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Set environment variable for Puppeteer to use the pre-installed Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# Manual Noto downloads (Symbols, Math, Music)
+RUN mkdir -p /usr/share/fonts/truetype/noto-manual
+ENV NOTO_BASE="https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf"
+RUN set -e; for font in \
+    "NotoSansSymbols/NotoSansSymbols-Regular.ttf" \
+    "NotoSansSymbols/NotoSansSymbols-Bold.ttf" \
+    "NotoSansSymbols/NotoSansSymbols-Light.ttf" \
+    "NotoSansSymbols/NotoSansSymbols-Medium.ttf" \
+    "NotoSansSymbols/NotoSansSymbols-SemiBold.ttf" \
+    "NotoSansSymbols/NotoSansSymbols-Thin.ttf" \
+    "NotoSansSymbols2/NotoSansSymbols2-Regular.ttf" \
+    "NotoSansMath/NotoSansMath-Regular.ttf" \
+    "NotoMusic/NotoMusic-Regular.ttf" \
+    ; do \
+    wget -q -O "/usr/share/fonts/truetype/noto-manual/$(basename $font)" "${NOTO_BASE}/${font}" || echo "skip $font"; \
+    done
 
-# Set working directory
+# ── EVERY SCRIPT-SPECIFIC NOTO FONT (Full Mirror) ──
+RUN set -e; for script in \
+    Adlam Ahom AnatolianHieroglyphs Arabic ArabicUI Armenian Avestan \
+    Balinese Bamum BassaVah Batak Bengali BengaliUI Bhaiksuki Brahmi \
+    Buginese Buhid CanadianAboriginal Carian CaucasianAlbanian Chakma \
+    Cham Cherokee Chorasmian Coptic Cuneiform Cypriot CyproMinoan \
+    Deseret Devanagari DevanagariUI Dogra Duployan EgyptianHieroglyphs \
+    Elbasan Elymaic Ethiopic Georgian Glagolitic Gothic Grantha \
+    Gujarati GujaratiUI GunjalaGondi Gurmukhi GurmukhiUI HanifiRohingya \
+    Hanunoo Hatran Hebrew ImperialAramaic IndicSiyaqNumbers \
+    InscriptionalPahlavi InscriptionalParthian Javanese Kaithi Kannada \
+    KannadaUI Kawi KayahLi Kharoshthi Khmer Khojki Khudawadi Lao \
+    Lepcha Limbu LinearA LinearB Lisu Lycian Lydian Mahajani Makasar \
+    Malayalam MalayalamUI Mandaic Manichaean Marchen MasaramGondi \
+    MayanNumerals MedefaidrinScript MeeteiMayek MendeKikakui Meroitic \
+    Miao Modi Mongolian Mro Multani Myanmar MyanmarUI Nabataean \
+    Nandinagari Newa NewTaiLue NKo NushuPua NyiakengPuachueHmong Ogham \
+    OlChiki OldHungarian OldItalic OldNorthArabian OldPermic OldPersian \
+    OldSogdian OldSouthArabian OldTurkic OldUyghur Oriya OriyaUI Osage \
+    Osmanya PahawhHmong Palmyrene PauCinHau PhagsPa Phoenician \
+    PsalterPahlavi Rejang Runic Samaritan Saurashtra Sharada Shavian \
+    Siddham SignWriting Sinhala SinhalaUI Sogdian SoraSompeng Soyombo \
+    Sundanese SylotiNagri Syriac SyriacEastern SyriacEstrangela \
+    SyriacWestern Tagalog Tagbanwa TaiLe TaiTham TaiViet Takri Tamil \
+    TamilSupplement TamilUI Tangsa Telugu TeluguUI Thaana Thai \
+    Tifinagh TifinaghAdrar TifinaghAgrawImazighen TifinaghAhaggar \
+    TifinaghAir TifinaghAPT TifinaghAzawagh TifinaghGhat TifinaghHawad \
+    TifinaghRhissaIxa TifinaghSIL TifinaghTawellemmet Tirhuta Ugaritic \
+    Vai Vithkuqi Wancho WarangCiti Yezidi Yi Zanabazar \
+    ; do \
+    wget -q -O "/usr/share/fonts/truetype/noto-manual/NotoSans${script}-Regular.ttf" \
+        "${NOTO_BASE}/NotoSans${script}/NotoSans${script}-Regular.ttf" 2>/dev/null || true; \
+    done
+
+# Download Inter Font
+RUN mkdir -p /usr/share/fonts/truetype/inter && \
+    wget -q -O /tmp/inter.zip "https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip" && \
+    unzip -qo /tmp/inter.zip -d /tmp/inter 2>/dev/null || true && \
+    find /tmp/inter -name "*.ttf" -exec cp {} /usr/share/fonts/truetype/inter/ \; 2>/dev/null || true && \
+    rm -rf /tmp/inter /tmp/inter.zip || true
+
+# Rebuild font cache
+RUN fc-cache -fv
+
+# Copy the built binary
 WORKDIR /app
-
-# Clone the repository
-RUN git clone https://github.com/AlexaInc/quotlyliteapi.git .
-
-# Install dependencies with legacy peer deps and rebuild native modules
-RUN npm install --legacy-peer-deps && \
-    npm rebuild sharp canvas
-
-# Ensure Puppeteer can find Chromium
-ENV PORT=7860
+COPY --from=builder /app/build/quoter ./
 
 # Expose port
-EXPOSE 7860
+EXPOSE 8080
 
-# Start the Web Interface
-CMD ["node", "app.js"]
+# Start
+CMD ["./quoter"]
