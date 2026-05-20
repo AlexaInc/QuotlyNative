@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libcairo2-dev \
     libpango1.0-dev \
-    libnlohmann-json-dev \
+    nlohmann-json3-dev \
     libcurl4-openssl-dev \
     # TDLib dependencies
     gperf \
@@ -234,8 +234,8 @@ RUN fc-cache -fv
 WORKDIR /app
 COPY --from=builder /app/build/quoter ./
 
-# Expose port
-EXPOSE 8080
+# Expose port (Internal for HF)
+EXPOSE 7860
 
 # Start
 CMD ["./quoter"]
