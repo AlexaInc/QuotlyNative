@@ -69,38 +69,37 @@ static Bytes build_pq_inner(
     return w.data();
 }
 
-// ── Derive tmp_aes key/iv from nonces (used for server_DH_params_ok decryption)
+// ── Derive tmp_aes key/iv per MTProto spec ───────────────────────────────────
 static void derive_tmp_aes(
     const Bytes& server_nonce, const Bytes& new_nonce,
     Bytes& aes_key, Bytes& aes_iv)
 {
     using namespace Crypto;
-    // msg_key_sha1 helpers
-    Bytes sn(server_nonce), nn(new_nonce);
+    // Per spec:
+    // SHA1(new_nonce + server_nonce)
+    // SHA1(server_nonce + new_nonce)
+    // SHA1(new_nonce + new_nonce)
+    Bytes nn(new_nonce), sn(server_nonce);
 
-    // key = SHA1(new_nonce + server_nonce)[0:12] + SHA1(server_nonce + new_nonce)[first 20 bytes — take 12]
-    Bytes hash1 = sha1(Bytes{nn.begin(), nn.end()});
-    hash1.insert(hash1.end(), sn.begin(), sn.end());
-    hash1 = sha1(hash1);
+    Bytes h1_input; h1_input.insert(h1_input.end(), nn.begin(), nn.end()); h1_input.insert(h1_input.end(), sn.begin(), sn.end());
+    Bytes h1 = sha1(h1_input);
 
-    Bytes hash2 = sha1(Bytes{sn.begin(), sn.end()});
-    hash2.insert(hash2.end(), nn.begin(), nn.end());
-    hash2 = sha1(hash2);
+    Bytes h2_input; h2_input.insert(h2_input.end(), sn.begin(), sn.end()); h2_input.insert(h2_input.end(), nn.begin(), nn.end());
+    Bytes h2 = sha1(h2_input);
 
-    Bytes hash3 = sha1(Bytes{nn.begin(), nn.end()});
-    hash3.insert(hash3.end(), nn.begin(), nn.end());
-    hash3 = sha1(hash3);
+    Bytes h3_input; h3_input.insert(h3_input.end(), nn.begin(), nn.end()); h3_input.insert(h3_input.end(), nn.begin(), nn.end());
+    Bytes h3 = sha1(h3_input);
 
-    // aes_key = hash1[0:20] + hash2[0:12]
+    // aes_key = h1[0:20] + h2[0:12]   (32 bytes)
     aes_key.clear();
-    aes_key.insert(aes_key.end(), hash1.begin(), hash1.end());        // 20 bytes
-    aes_key.insert(aes_key.end(), hash2.begin(), hash2.begin() + 12); // 12 bytes → 32 total
+    aes_key.insert(aes_key.end(), h1.begin(), h1.end());         // 20 bytes
+    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);  // 12 bytes
 
-    // aes_iv = hash2[12:20] + hash3[0:20] + new_nonce[0:4]
+    // aes_iv = h2[12:20] + h3[0:20] + new_nonce[0:4]  (32 bytes)
     aes_iv.clear();
-    aes_iv.insert(aes_iv.end(), hash2.begin() + 12, hash2.end());     // 8 bytes
-    aes_iv.insert(aes_iv.end(), hash3.begin(),       hash3.end());    // 20 bytes
-    aes_iv.insert(aes_iv.end(), nn.begin(),           nn.begin() + 4);// 4 bytes → 32 total
+    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());      // 8 bytes
+    aes_iv.insert(aes_iv.end(), h3.begin(),       h3.end());     // 20 bytes
+    aes_iv.insert(aes_iv.end(), nn.begin(),        nn.begin() + 4); // 4 bytes
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -179,6 +178,8 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
 
     TLReader r_dh(payload);
     cid = r_dh.readInt32();
+    if (cid == TL::server_DH_params_fail)
+        throw std::runtime_error("server_DH_params_fail — bad RSA inner data or fingerprint");
     if (cid != TL::server_DH_params_ok)
         throw std::runtime_error("Expected server_DH_params_ok, got: " + std::to_string(cid));
 

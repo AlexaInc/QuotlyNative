@@ -209,17 +209,26 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
 
         double replyH = msg.reply.hasReply ? 40 : 0;
         double photoH = 0;
+        bool barePHoto = isPhoto && !msg.photoPath.empty() && !hasText;
         if (isPhoto && !msg.photoPath.empty()) {
-            photoH = kPhotoMaxH + 8; // photo with margin
+            photoH = kPhotoMaxH;
         }
 
         double contentW = (double)tw;
-        if (isPhoto) contentW = std::max(contentW, kPhotoMaxW);
+        if (barePHoto) {
+            // captionless photo: size = exactly the photo dimensions
+            contentW = kPhotoMaxW;
+        } else if (isPhoto) {
+            contentW = std::max(contentW, kPhotoMaxW);
+        }
         double msgW = std::max({contentW, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
+        if (barePHoto) msgW = kPhotoMaxW; // no extra padding for bare photos
         msgW = std::clamp(msgW, kMsgMinWidth, kMsgMaxWidth);
-        maxW = std::max(maxW, msgW);
+        maxW = std::max(maxW, barePHoto ? 0.0 : msgW); // bare photos don't widen all bubbles
 
-        double msgH = kPadTop + nameH + replyH + (hasText ? th : 0) + photoH + kPadBottom;
+        double msgH = barePHoto
+                    ? kPhotoMaxH + 4                                                     // bare: photo height only
+                    : kPadTop + nameH + replyH + (hasText ? th : 0) + photoH + kPadBottom;
         sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW, false});
         totalH += msgH + 4;
         g_object_unref(tl); pango_font_description_free(td);
@@ -326,9 +335,10 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
 
         // ── PHOTO inside bubble with thin rounded border ─────────────────
         if (msg.mediaType == MediaType::Photo && !msg.photoPath.empty()) {
-            double px = bubbleX + kPadLeft;
-            double pw = maxW - kPadLeft - kPadRight;
-            double ph = sz.photoH - 8;
+            bool barePhotoRender = !hasText;
+            double px = barePhotoRender ? bubbleX : bubbleX + kPadLeft;
+            double pw = barePhotoRender ? sz.bubbleW : maxW - kPadLeft - kPadRight;
+            double ph = sz.photoH;
             // Rounded rect with thin border
             cairo_new_path(cr);
             cairo_arc(cr, px + kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, M_PI, 3*M_PI/2);

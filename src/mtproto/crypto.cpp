@@ -32,9 +32,22 @@ Bytes sha256(const Bytes& data) {
 }
 
 // ── AES-256-IGE ───────────────────────────────────────────────────────────────
-//
 // IGE mode:  c_i = AES_K( p_i XOR c_{i-1} ) XOR p_{i-1}
-//            where c_0 = iv[16..31], p_0 = iv[0..15]
+
+static void evp_aes_block(const uint8_t* key, const uint8_t* in, uint8_t* out, bool encrypt) {
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    int outl = 0;
+    if (encrypt) {
+        EVP_EncryptInit_ex(ctx, EVP_aes_256_ecb(), nullptr, key, nullptr);
+        EVP_CIPHER_CTX_set_padding(ctx, 0);
+        EVP_EncryptUpdate(ctx, out, &outl, in, 16);
+    } else {
+        EVP_DecryptInit_ex(ctx, EVP_aes_256_ecb(), nullptr, key, nullptr);
+        EVP_CIPHER_CTX_set_padding(ctx, 0);
+        EVP_DecryptUpdate(ctx, out, &outl, in, 16);
+    }
+    EVP_CIPHER_CTX_free(ctx);
+}
 
 Bytes aes_ige_encrypt(const Bytes& data, const Bytes& key, const Bytes& iv) {
     if (key.size() != 32 || iv.size() != 32)
@@ -42,24 +55,19 @@ Bytes aes_ige_encrypt(const Bytes& data, const Bytes& key, const Bytes& iv) {
     if (data.size() % 16 != 0)
         throw std::invalid_argument("AES-IGE: data must be multiple of 16 bytes");
 
-    AES_KEY aes;
-    AES_set_encrypt_key(key.data(), 256, &aes);
-
     Bytes out(data.size());
-    uint8_t prev_cipher[16];
-    uint8_t prev_plain[16];
-    std::memcpy(prev_plain,  iv.data(),      16); // iv1
-    std::memcpy(prev_cipher, iv.data() + 16, 16); // iv2
+    uint8_t prev_cipher[16], prev_plain[16];
+    std::memcpy(prev_plain,  iv.data(),      16);
+    std::memcpy(prev_cipher, iv.data() + 16, 16);
 
     for (size_t i = 0; i < data.size(); i += 16) {
-        uint8_t tmp[16];
-        for (int j = 0; j < 16; ++j)
-            tmp[j] = data[i + j] ^ prev_cipher[j];
-        AES_encrypt(tmp, out.data() + i, &aes);
-        for (int j = 0; j < 16; ++j)
-            out[i + j] ^= prev_plain[j];
+        uint8_t tmp[16], block_out[16];
+        for (int j = 0; j < 16; ++j) tmp[j] = data[i + j] ^ prev_cipher[j];
+        evp_aes_block(key.data(), tmp, block_out, true);
+        for (int j = 0; j < 16; ++j) block_out[j] ^= prev_plain[j];
+        std::memcpy(out.data() + i, block_out, 16);
         std::memcpy(prev_plain,  data.data() + i, 16);
-        std::memcpy(prev_cipher, out.data()  + i, 16);
+        std::memcpy(prev_cipher, block_out, 16);
     }
     return out;
 }
@@ -70,45 +78,43 @@ Bytes aes_ige_decrypt(const Bytes& data, const Bytes& key, const Bytes& iv) {
     if (data.size() % 16 != 0)
         throw std::invalid_argument("AES-IGE: data must be multiple of 16 bytes");
 
-    AES_KEY aes;
-    AES_set_decrypt_key(key.data(), 256, &aes);
-
     Bytes out(data.size());
-    uint8_t prev_cipher[16];
-    uint8_t prev_plain[16];
-    std::memcpy(prev_plain,  iv.data(),      16); // iv1
-    std::memcpy(prev_cipher, iv.data() + 16, 16); // iv2
+    uint8_t prev_cipher[16], prev_plain[16];
+    std::memcpy(prev_plain,  iv.data(),      16);
+    std::memcpy(prev_cipher, iv.data() + 16, 16);
 
     for (size_t i = 0; i < data.size(); i += 16) {
-        uint8_t tmp[16];
-        for (int j = 0; j < 16; ++j)
-            tmp[j] = data[i + j] ^ prev_plain[j];
-        AES_decrypt(tmp, out.data() + i, &aes);
-        for (int j = 0; j < 16; ++j)
-            out[i + j] ^= prev_cipher[j];
+        uint8_t tmp[16], block_out[16];
+        for (int j = 0; j < 16; ++j) tmp[j] = data[i + j] ^ prev_plain[j];
+        evp_aes_block(key.data(), tmp, block_out, false);
+        for (int j = 0; j < 16; ++j) block_out[j] ^= prev_cipher[j];
+        std::memcpy(out.data() + i, block_out, 16);
         std::memcpy(prev_cipher, data.data() + i, 16);
-        std::memcpy(prev_plain,  out.data()  + i, 16);
+        std::memcpy(prev_plain,  block_out, 16);
     }
     return out;
 }
 
 // ── RSA (MTProto custom padding) ──────────────────────────────────────────────
-// Format: SHA1(data) [20 bytes] + data + random_padding → 255 bytes → RSA → 256 bytes
+// Format: SHA1(data)[20] + data + random_padding → 255 bytes total → RSA → 256 bytes
 
 Bytes rsa_encrypt(const Bytes& data, const Bytes& n, const Bytes& e) {
     Bytes hash = sha1(data);
 
-    Bytes padded(255, 0);
-    size_t pos = 0;
-    // SHA1 (20 bytes)
-    std::copy(hash.begin(), hash.end(), padded.begin());
-    pos += 20;
-    // data
-    size_t data_copy = std::min(data.size(), (size_t)(255 - 20));
-    std::copy(data.begin(), data.begin() + data_copy, padded.begin() + pos);
-    // remaining bytes stay 0 (not random — keeping deterministic for auth)
+    // Pad to 255 bytes: SHA1(20) + data + random_fill
+    size_t total = 255;
+    size_t pad_size = total - 20 - data.size();
+    Bytes padding = random_bytes(pad_size);
 
-    // RSA: result = padded^e mod n
+    Bytes padded;
+    padded.insert(padded.end(), hash.begin(),    hash.end());    // 20 bytes SHA1
+    padded.insert(padded.end(), data.begin(),    data.end());    // inner data
+    padded.insert(padded.end(), padding.begin(), padding.end()); // random padding
+
+    if (padded.size() != 255)
+        throw std::runtime_error("RSA padded size != 255");
+
+    // RSA: result = padded^e mod n (big-endian)
     BIGNUM* bn_msg = BN_bin2bn(padded.data(), 255, nullptr);
     BIGNUM* bn_n   = BN_bin2bn(n.data(), n.size(), nullptr);
     BIGNUM* bn_e   = BN_bin2bn(e.data(), e.size(), nullptr);
