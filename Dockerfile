@@ -43,6 +43,7 @@ RUN GIT_SSL_NO_VERIFY=true git clone --depth 1 https://github.com/tdlib/td.git /
     mkdir -p /usr/local/include/td/telegram/ && \
     cp /tmp/td-src/td/telegram/td_json_client.h /usr/local/include/td/telegram/ && \
     cp /tmp/td-src/td/telegram/td_log.h /usr/local/include/td/telegram/ && \
+    cp /tmp/td-src/td/telegram/tdjson_export.h /usr/local/include/td/telegram/ && \
     rm -rf /tmp/td-src
 
 # Download Crow (C++ Web Framework) header
