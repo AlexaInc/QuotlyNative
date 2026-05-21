@@ -244,11 +244,9 @@ RUN mkdir -p /usr/share/fonts/truetype/inter && \
 # Rebuild font cache
 RUN fc-cache -fv
 
-# Copy compiled shared libs & binaries from builder stage
+# Copy compiled binary from builder stage
 WORKDIR /app
-COPY --from=builder /usr/local/lib/ /usr/local/lib/
-COPY --from=builder /usr/local/include/ /usr/local/include/
-COPY --from=builder /app/build/quoter ./
+COPY --from=builder /app/build/QuoteAPI ./quoter
 
 RUN ldconfig
 
