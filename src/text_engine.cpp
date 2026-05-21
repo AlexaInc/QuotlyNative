@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — Text Engine
+// developer hansaka@alexainc
+
 #include "text_engine.h"
 #include <algorithm>
 #include <regex>

@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — API Handler
+// developer hansaka@alexainc
+
 #pragma once
 #include <crow.h>
 #include <nlohmann/json.hpp>

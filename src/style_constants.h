@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — Style Constants
+// developer hansaka@alexainc
+
 #pragma once
 #include <string>
 

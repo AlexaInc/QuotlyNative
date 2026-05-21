@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — Cairo Renderer
+// developer hansaka@alexainc
+
 #include "renderer.h"
 #include "style_constants.h"
 #include <cmath>

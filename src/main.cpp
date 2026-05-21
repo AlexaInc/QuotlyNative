@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — Main Entry Point
+// developer hansaka@alexainc
+
 #include "api_handler.h"
 #include "tg_client.h"
 #include <crow.h>

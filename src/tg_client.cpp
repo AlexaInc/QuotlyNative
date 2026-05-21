@@ -1,30 +1,36 @@
+// this file is part of AlexaInc / QuotlyNative — TG Client
+// developer hansaka@alexainc
+
 #include "tg_client.h"
-#include <td/telegram/td_json_client.h>
 #include <iostream>
 
 namespace Quote {
 
 TgClient::TgClient(int apiId, const std::string& apiHash) 
     : m_apiId(apiId), m_apiHash(apiHash) {
-    m_client = td_json_client_create();
+    // Client is constructed automatically
 }
 
 TgClient::~TgClient() {
-    td_json_client_destroy(m_client);
+    m_mtproto.disconnect();
 }
 
 bool TgClient::authenticate(const std::string& botToken) {
-    // Basic TDLib authentication logic would go here
-    // Sending setTdlibParameters, checkDatabaseEncryptionKey, etc.
-    return true; 
+    if (m_apiId <= 0 || m_apiHash.empty() || botToken.empty()) {
+        std::cerr << "TgClient: Missing credentials." << std::endl;
+        return false;
+    }
+    // Connect to DC 2 by default
+    return m_mtproto.connect(botToken, 2);
 }
 
 std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
-    // Logic to call getCustomEmojiStickers via TDLib
+    // Stub: Logic to call messages.getCustomEmojiDocuments via MTProto
     return "";
 }
 
 std::string TgClient::fetchAvatar(const std::string& userId) {
+    // Stub: Logic to call photos.getUserPhotos via MTProto
     return "";
 }
 

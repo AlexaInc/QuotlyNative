@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — API Handler
+// developer hansaka@alexainc
+
 #include "api_handler.h"
 #include "renderer.h"
 #include "text_engine.h"

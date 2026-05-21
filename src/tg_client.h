@@ -1,8 +1,12 @@
+// this file is part of AlexaInc / QuotlyNative — TG Client
+// developer hansaka@alexainc
+
 #pragma once
 #include <string>
 #include <vector>
 #include <memory>
 #include <map>
+#include "mtproto/client.h"
 
 namespace Quote {
 
@@ -22,8 +26,7 @@ public:
 private:
     int m_apiId;
     std::string m_apiHash;
-    // TDLib client pointer (opaque for now)
-    void* m_client;
+    MTProto::Client m_mtproto;
 };
 
 } // namespace Quote
