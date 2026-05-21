@@ -38,6 +38,7 @@ struct MessageData {
     std::string pangoMarkup;           // processed Pango markup from TextEngine
     std::string senderName;            // "First Last"
     int         senderId    = 0;       // used to pick name color
+    std::string senderKey;             // unique identifier for grouping
     bool        isOutgoing  = false;
     ReplyData   reply;
     std::string photoPath;             // path to downloaded photo (if any)

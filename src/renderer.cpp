@@ -163,8 +163,8 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
     std::vector<bool> firstInGroup(messages.size());
     std::vector<bool> lastInGroup(messages.size());
     for (size_t i = 0; i < messages.size(); ++i) {
-        firstInGroup[i] = (i == 0 || messages[i-1].senderId != messages[i].senderId);
-        lastInGroup[i]  = (i == messages.size() - 1 || messages[i+1].senderId != messages[i].senderId);
+        firstInGroup[i] = (i == 0 || messages[i-1].senderKey != messages[i].senderKey);
+        lastInGroup[i]  = (i == messages.size() - 1 || messages[i+1].senderKey != messages[i].senderKey);
     }
 
     for (size_t i = 0; i < messages.size(); ++i) {
@@ -191,7 +191,13 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         if (hasText) measureLayout(tl, maxTextWidth, tw, th);
 
         double nameH = 0, nameW = 0;
-        if (firstInGroup[i] && !msg.senderName.empty()) {
+        bool hasCaption = !msg.text.empty() || !msg.pangoMarkup.empty();
+        bool showName = firstInGroup[i] && !msg.senderName.empty();
+        
+        // If it's a Photo with no caption, we don't show the name (matches sticker behavior)
+        if (isPhoto && !hasCaption) showName = false;
+
+        if (showName) {
             PangoLayout* nl = pango_cairo_create_layout(measure_cr);
             PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 13");
             pango_layout_set_font_description(nl, nd);
@@ -272,14 +278,27 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         }
 
         // ── NORMAL / PHOTO: draw bubble ──────────────────────────────────
-        RenderOptions mOpts = options;
-        mOpts.isOut = msg.isOutgoing;
-        mOpts.rounding.topLeft = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
-        mOpts.rounding.topRight = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
-        mOpts.rounding.bottomLeft = (lastInGroup[i]) ? CornerRounding::Tail : CornerRounding::Small;
-        mOpts.rounding.bottomRight = CornerRounding::Large;
+        bool hasText = !msg.text.empty() || !msg.pangoMarkup.empty();
+        bool isPhoto = (msg.mediaType == MediaType::Photo);
+        bool showBubble = !sz.isSticker;
+        bool showName   = firstInGroup[i] && !msg.senderName.empty();
 
-        drawBubble(cr, bubbleX, curY, maxW, sz.h, mOpts);
+        // If photo has no caption, don't show bubble/name (Telegram style)
+        if (isPhoto && !hasText) {
+            showBubble = false;
+            showName = false;
+        }
+
+        if (showBubble) {
+            RenderOptions mOpts = options;
+            mOpts.isOut = msg.isOutgoing;
+            mOpts.rounding.topLeft = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
+            mOpts.rounding.topRight = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
+            mOpts.rounding.bottomLeft = (lastInGroup[i]) ? CornerRounding::Tail : CornerRounding::Small;
+            mOpts.rounding.bottomRight = CornerRounding::Large;
+
+            drawBubble(cr, bubbleX, curY, maxW, sz.h, mOpts);
+        }
 
         if (lastInGroup[i]) {
             double avatarY = curY + sz.h - kAvatarSize;
@@ -287,7 +306,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         }
 
         double py = curY + kPadTop;
-        if (firstInGroup[i] && !msg.senderName.empty()) {
+        if (showName) {
              auto color = hexToRGBA(nameColor(msg.senderId));
              cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
              PangoLayout* nl = pango_cairo_create_layout(cr);
@@ -300,6 +319,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         }
 
         if (msg.reply.hasReply) {
+             // ...
             drawReply(cr, bubbleX + kPadLeft, py, maxW - kPadLeft - kPadRight, msg.reply);
             py += sz.replyH;
         }
