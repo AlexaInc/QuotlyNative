@@ -24,6 +24,7 @@ set(SOURCES
     src/api_handler.cpp
     src/renderer.cpp
     src/text_engine.cpp
+    src/tg_client.cpp
 )
 
 add_executable(QuoteAPI ${SOURCES})
@@ -33,4 +34,5 @@ target_link_libraries(QuoteAPI
     ${CAIRO_LIBRARIES}
     ${PANGO_LIBRARIES}
     Threads::Threads
+    tdjson
 )
