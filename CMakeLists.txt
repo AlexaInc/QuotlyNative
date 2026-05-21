@@ -24,7 +24,6 @@ set(SOURCES
     src/api_handler.cpp
     src/renderer.cpp
     src/text_engine.cpp
-    src/emoji_engine.cpp
 )
 
 add_executable(QuoteAPI ${SOURCES})
