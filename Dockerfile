@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     nlohmann-json3-dev \
     libcurl4-openssl-dev \
     libssl-dev \
+    libasio-dev \
     zlib1g-dev \
     # ── Prebuilt TDLib (no compilation!) ──────
     libtdlib-dev \

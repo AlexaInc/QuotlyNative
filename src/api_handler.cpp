@@ -39,7 +39,6 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
         options.rounding.bottomRight = CornerRounding::Large;
         options.isOut = false; // Default to IN for testing
         
-        std::string firstMsgText = body["messages"][0].value("text", "");
         auto entities = body["messages"][0].value("entities", nlohmann::json::array());
         
         std::string processedText = TextEngine::processEntities(firstMsgText, entities);
