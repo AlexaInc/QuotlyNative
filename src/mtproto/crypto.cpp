@@ -79,18 +79,23 @@ Bytes aes_ige_decrypt(const Bytes& data, const Bytes& key, const Bytes& iv) {
         throw std::invalid_argument("AES-IGE: data must be multiple of 16 bytes");
 
     Bytes out(data.size());
-    uint8_t prev_cipher[16], prev_plain[16];
-    std::memcpy(prev_plain,  iv.data(),      16);
-    std::memcpy(prev_cipher, iv.data() + 16, 16);
+    // For IGE decrypt: x_i = D_k(c_i XOR x_{i-1}) XOR c_{i-1}
+    // x_0 = iv[0:16], c_0 = iv[16:32]
+    uint8_t x_prev[16], c_prev[16];
+    std::memcpy(x_prev, iv.data(),      16); // x_0
+    std::memcpy(c_prev, iv.data() + 16, 16); // c_0
 
     for (size_t i = 0; i < data.size(); i += 16) {
         uint8_t tmp[16], block_out[16];
-        for (int j = 0; j < 16; ++j) tmp[j] = data[i + j] ^ prev_plain[j];
-        evp_aes_block(key.data(), tmp, block_out, false);
-        for (int j = 0; j < 16; ++j) block_out[j] ^= prev_cipher[j];
+        // tmp = c_i XOR x_{i-1}
+        for (int j = 0; j < 16; ++j) tmp[j] = data[i + j] ^ x_prev[j];
+        evp_aes_block(key.data(), tmp, block_out, false); // D_k(tmp)
+        // x_i = D_k(c_i XOR x_{i-1}) XOR c_{i-1}
+        for (int j = 0; j < 16; ++j) block_out[j] ^= c_prev[j];
         std::memcpy(out.data() + i, block_out, 16);
-        std::memcpy(prev_cipher, data.data() + i, 16);
-        std::memcpy(prev_plain,  block_out, 16);
+        // Advance: c_{i} becomes c_prev, x_i becomes x_prev
+        std::memcpy(c_prev, data.data() + i, 16); // c_i
+        std::memcpy(x_prev, block_out, 16);        // x_i
     }
     return out;
 }
