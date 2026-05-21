@@ -355,7 +355,6 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         }
 
         // ── Text ─────────────────────────────────────────────────────────
-        bool hasText = !msg.text.empty() || !msg.pangoMarkup.empty();
         if (hasText) {
             PangoLayout* tl = pango_cairo_create_layout(cr);
             PangoFontDescription* td = pango_font_description_from_string("Inter 14");
