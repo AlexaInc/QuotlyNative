@@ -1,0 +1,15 @@
+build/
+bin/
+*.o
+*.a
+*.so
+.git/
+.vscode/
+.vs/
+tdesktop_ref/
+quotlyliteapi/
+node_modules/
+tests/
+quote_result*.png
+.env
+.mtproto_session
