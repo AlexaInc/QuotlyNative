@@ -35,6 +35,7 @@ struct MessageData {
 struct RenderOptions {
     bool transparent     = true;
     std::string backgroundColor = "#00000000";
+    bool isOut           = false;
     bool hasBubble       = true;
     BubbleRounding rounding;
 };
