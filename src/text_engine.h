@@ -16,6 +16,7 @@ struct Entity {
 class TextEngine {
 public:
     static std::string processEntities(const std::string& text, const nlohmann::json& entities);
+    static bool isOnlyEmoji(const std::string& text);
 };
 
 } // namespace Quote

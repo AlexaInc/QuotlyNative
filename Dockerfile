@@ -1,8 +1,17 @@
-# Build stage
-FROM debian:bookworm-slim AS builder
+# ──────────────────────────────────────────────
+# Build stage – Ubuntu 22.04 (Jammy) ships a
+# prebuilt libtdlib-dev in the universe repo.
+# No TDLib compilation required.
+# ──────────────────────────────────────────────
+FROM ubuntu:22.04 AS builder
 
-# Install build dependencies
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Enable universe (contains libtdlib-dev) and install all build deps + TDLib
 RUN apt-get update && apt-get install -y \
+    software-properties-common && \
+    add-apt-repository universe && \
+    apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
@@ -10,26 +19,22 @@ RUN apt-get update && apt-get install -y \
     curl \
     unzip \
     pkg-config \
+    ca-certificates \
     libcairo2-dev \
     libpango1.0-dev \
     nlohmann-json3-dev \
     libcurl4-openssl-dev \
-    # TDLib dependencies
-    gperf \
     libssl-dev \
     zlib1g-dev \
-    --no-install-recommends
+    # ── Prebuilt TDLib (no compilation!) ──────
+    libtdlib-dev \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
 
-# Build TDLib
-RUN git clone https://github.com/tdlib/td.git /tmp/td && \
-    cd /tmp/td && \
-    mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release .. && \
-    cmake --build . --target tdjson -j$(nproc) && \
-    cmake --install . && \
-    rm -rf /tmp/td
+# Download Crow (C++ Web Framework) header
+RUN wget -q -O /usr/include/crow.h https://github.com/CrowCpp/Crow/releases/download/v1.0+5/crow_all.h
 
-# Copy source OR clone from GitHub (as requested)
+# Clone and build our own app
 WORKDIR /app
 RUN git clone https://github.com/AlexaInc/QuotlyNative.git .
 
@@ -37,18 +42,28 @@ RUN mkdir build && cd build && \
     cmake .. && \
     make -j$(nproc)
 
-# Final stage
-FROM debian:bookworm-slim
+# ──────────────────────────────────────────────
+# Final / runtime stage
+# ──────────────────────────────────────────────
+FROM ubuntu:22.04
 
-# Install runtime dependencies and the COMPREHENSIVE FONT STACK
-RUN apt-get update && apt-get install -y \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    add-apt-repository universe && \
+    apt-get update && apt-get install -y \
+    software-properties-common \
+    ca-certificates \
     libcairo2 \
     libpango-1.0-0 \
+    libpangocairo-1.0-0 \
     fontconfig \
     wget \
     curl \
     unzip \
-    # ── Full Font List from quotlyliteapi ──
+    # TDLib runtime
+    libtdlib0 \
+    # ── Full Font Stack ───────────────────────
     fonts-noto \
     fonts-noto-core \
     fonts-noto-extra \
@@ -162,7 +177,6 @@ RUN apt-get update && apt-get install -y \
     fonts-jetbrains-mono \
     fonts-inconsolata \
     fonts-mononoki \
-    fonts-mathjax \
     fonts-stix \
     fonts-lyx \
     fonts-texgyre \
@@ -230,12 +244,10 @@ RUN mkdir -p /usr/share/fonts/truetype/inter && \
 # Rebuild font cache
 RUN fc-cache -fv
 
-# Copy the built binary
+# Copy the built binary from builder
 WORKDIR /app
 COPY --from=builder /app/build/quoter ./
 
-# Expose port (Internal for HF)
 EXPOSE 7860
 
-# Start
 CMD ["./quoter"]
