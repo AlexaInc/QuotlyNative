@@ -1,19 +1,51 @@
 {
   "messages": [
     {
-      "text": "Hello, this is a **bold** message from the C++ API!sssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+      "text": "Check out this cool C++ MTProto API! 🙂",
       "entities": [
         {
-          "offset": 23,
-          "length": 8,
+          "offset": 11,
+          "length": 3,
           "type": "bold"
+        },
+        {
+          "offset": 15,
+          "length": 7,
+          "type": "italic"
+        },
+        {
+          "offset": 37,
+          "length": 2,
+          "type": "custom_emoji",
+          "document_id": "5352552264781290450"
         }
       ],
       "from": {
         "id": 12345,
-        "first_name": "Test",
-        "last_name": "User",
-        "username": "testuser"
+        "first_name": "Hansaka",
+        "last_name": "Alexa",
+        "username": "hansaka_alexa"
+      },
+      "reply_to": {
+        "text": "Waiting for the new renderer...",
+        "from": {
+          "id": 99999,
+          "first_name": "User",
+          "username": "testuser"
+        }
+      }
+    },
+    {
+      "text": "It supports multi-messages now!",
+      "from": {
+        "id": 67890,
+        "first_name": "Secondary",
+        "last_name": "Bot"
+      },
+      "photo": {
+        "file_id": "AgACAgIAAxkBAA...",
+        "width": 800,
+        "height": 600
       }
     }
   ],

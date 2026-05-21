@@ -31,6 +31,8 @@ struct ReplyData {
     bool hasReply = false;
 };
 
+enum class MediaType { None, Photo, Sticker };
+
 struct MessageData {
     std::string text;                  // raw text
     std::string pangoMarkup;           // processed Pango markup from TextEngine
@@ -39,6 +41,7 @@ struct MessageData {
     bool        isOutgoing  = false;
     ReplyData   reply;
     std::string photoPath;             // path to downloaded photo (if any)
+    MediaType   mediaType   = MediaType::None; // None / Photo / Sticker
 };
 
 struct RenderOptions {

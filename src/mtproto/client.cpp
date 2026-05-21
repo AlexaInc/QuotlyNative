@@ -55,58 +55,68 @@ bool Client::connect(const std::string& bot_token, int dc_id) {
 }
 
 bool Client::do_connect() {
-    try {
-        std::cout << "  [MTProto] Connecting to DC" << m_dc_id << "..." << std::endl;
+    int start_dc = m_dc_id;
+    for (int attempts = 0; attempts < 5; ++attempts) {
+        int attempt_dc = ((start_dc - 1 + attempts) % 5) + 1;
+        try {
+            std::cout << "  [MTProto] Connecting to DC" << attempt_dc << "..." << std::endl;
 
-        // Create fresh transport + auth key
-        m_transport = std::make_unique<Transport>();
-        m_transport->connect(m_dc_id);
+            // Create fresh transport + auth key
+            m_transport = std::make_unique<Transport>();
+            m_transport->connect(attempt_dc);
 
-        m_auth_key = std::make_unique<AuthKey>(
-            generate_auth_key(*m_transport, m_dc_id)
-        );
+            m_auth_key = std::make_unique<AuthKey>(
+                generate_auth_key(*m_transport, attempt_dc)
+            );
 
-        m_session = std::make_unique<Session>(*m_transport, *m_auth_key);
+            m_session = std::make_unique<Session>(*m_transport, *m_auth_key);
 
-        // Authenticate as bot
-        std::cout << "  [MTProto] Authenticating bot..." << std::endl;
-        Bytes auth_req = build_import_bot_auth(m_bot_token);
-        int64_t msg_id = m_session->send(auth_req);
+            // Authenticate as bot
+            std::cout << "  [MTProto] Authenticating bot..." << std::endl;
+            Bytes auth_req = build_import_bot_auth(m_bot_token);
+            int64_t msg_id = m_session->send(auth_req);
 
-        // Wait for auth response
-        Bytes resp = m_session->recv();
-        if (resp.empty()) throw std::runtime_error("Empty auth response");
+            // Wait for auth response
+            Bytes resp = m_session->recv();
+            if (resp.empty()) throw std::runtime_error("Empty auth response");
 
-        // Check for rpc_error in response
-        TLReader r(resp);
-        int32_t cid = r.readInt32();
-        if (cid == TL::rpc_result) {
-            r.readInt64(); // req_msg_id
-            int32_t inner_cid = r.readInt32();
-            if (inner_cid == TL::rpc_error) {
-                int32_t err_code = r.readInt32();
-                std::string err_msg = r.readString();
-                throw std::runtime_error("Bot auth error " +
-                    std::to_string(err_code) + ": " + err_msg);
+            // Check for rpc_error in response
+            TLReader r(resp);
+            int32_t cid = r.readInt32();
+            if (cid == TL::rpc_result) {
+                r.readInt64(); // req_msg_id
+                int32_t inner_cid = r.readInt32();
+                if (inner_cid == TL::rpc_error) {
+                    int32_t err_code = r.readInt32();
+                    std::string err_msg = r.readString();
+                    throw std::runtime_error("Bot auth error " +
+                        std::to_string(err_code) + ": " + err_msg);
+                }
             }
+
+            m_connected  = true;
+            m_backoff_s  = 1; // reset on success
+            m_dc_id      = attempt_dc;
+            std::cout << "  [MTProto] ✅ Connected to DC" << m_dc_id
+                      << " as bot (AlexaInc/QuotlyNative)" << std::endl;
+
+            // Start background receiver
+            if (m_recv_thread.joinable()) m_recv_thread.join();
+            m_recv_thread = std::thread([this] { recv_loop(); });
+
+            return true;
+
+        } catch (const std::exception& e) {
+            std::cerr << "  [MTProto] ❌ Connection failed on DC" << attempt_dc << ": " << e.what() << std::endl;
+            if (m_transport) { m_transport->close(); }
+            m_transport = nullptr; m_auth_key = nullptr; m_session = nullptr;
         }
-
-        m_connected  = true;
-        m_backoff_s  = 1; // reset on success
-        std::cout << "  [MTProto] ✅ Connected to DC" << m_dc_id
-                  << " as bot (AlexaInc/QuotlyNative)" << std::endl;
-
-        // Start background receiver
-        if (m_recv_thread.joinable()) m_recv_thread.join();
-        m_recv_thread = std::thread([this] { recv_loop(); });
-
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "  [MTProto] ❌ Connection failed: " << e.what() << std::endl;
-        m_connected = false;
-        return false;
     }
+    
+    // If all DCs failed
+    std::cerr << "  [MTProto] ❌ All DCs failed to connect." << std::endl;
+    m_connected = false;
+    return false;
 }
 
 // ── Background receiver loop ──────────────────────────────────────────────────
@@ -259,7 +269,11 @@ void Client::schedule_reconnect() {
     m_reconnect_thread = std::thread([this, backoff] {
         std::cout << "  [MTProto] Reconnecting in " << backoff << "s..." << std::endl;
         std::this_thread::sleep_for(std::chrono::seconds(backoff));
-        if (!m_stopping) do_connect();
+        if (!m_stopping) {
+            if (!do_connect()) {
+                schedule_reconnect();
+            }
+        }
     });
 }
 
