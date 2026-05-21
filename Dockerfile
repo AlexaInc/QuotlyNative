@@ -36,9 +36,9 @@ RUN apt-get update && apt-get install -y \
 # Download Crow (C++ Web Framework) header
 RUN wget -q -O /usr/include/crow.h https://github.com/CrowCpp/Crow/releases/download/v1.0+5/crow_all.h
 
-# Clone and build our own app
+# Copy and build our own app from the current context
 WORKDIR /app
-RUN git clone https://github.com/AlexaInc/QuotlyNative.git .
+COPY . .
 
 RUN mkdir build && cd build && \
     cmake .. && \
