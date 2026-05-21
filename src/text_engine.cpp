@@ -3,62 +3,83 @@
 
 #include "text_engine.h"
 #include <algorithm>
-#include <regex>
 
 namespace Quote {
 
-std::string TextEngine::processEntities(const std::string& text, const nlohmann::json& entities) {
-    if (entities.empty()) return text;
+// ── XML / Pango escape ────────────────────────────────────────────────────────
+static std::string xmlEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        switch (c) {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&apos;"; break;
+            default:   out += c;        break;
+        }
+    }
+    return out;
+}
 
-    // Sort entities by offset
-    std::vector<nlohmann::json> sortedEntities = entities.get<std::vector<nlohmann::json>>();
-    std::sort(sortedEntities.begin(), sortedEntities.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
-        return a["offset"].get<int>() < b["offset"].get<int>();
-    });
+std::string TextEngine::processEntities(const std::string& text,
+                                         const nlohmann::json& entities) {
+    struct Tag { int pos; std::string markup; };
+    std::vector<Tag> tags;
 
-    std::string result = "";
-    int cursor = 0;
+    if (!entities.empty()) {
+        auto sorted = entities.get<std::vector<nlohmann::json>>();
+        std::sort(sorted.begin(), sorted.end(), [](const nlohmann::json& a, const nlohmann::json& b){
+            return a["offset"].get<int>() < b["offset"].get<int>();
+        });
 
-    for (const auto& e : sortedEntities) {
-        int offset = e["offset"].get<int>();
-        int length = e["length"].get<int>();
-        std::string type = e["type"].get<std::string>();
+        for (const auto& e : sorted) {
+            int off = e.value("offset", 0);
+            int len = e.value("length", 0);
+            if (len <= 0) continue;
+            std::string type = e.value("type", "");
 
-        // Add text before entity
-        result += text.substr(cursor, offset - cursor);
-
-        // Apply entity logic matching reference JS
-        if (type == "url" || type == "text_url" || type == "mention" || type == "bot_command") {
-            // Logic from user feedback: add line break if needed
-            // (Simulated plain text check)
-            if (!result.empty() && result.back() != '\n' && result.back() != ' ') {
-                // Simplified regex-like check for alphanumeric or specific unicode range
-                char last = result.back();
-                if (isalnum(last)) {
-                    result += "\n"; // Equivalent to <br/> in our text engine
-                }
+            std::string open, close;
+            if      (type == "bold")          { open = "<b>";          close = "</b>"; }
+            else if (type == "italic")        { open = "<i>";          close = "</i>"; }
+            else if (type == "underline")     { open = "<u>";          close = "</u>"; }
+            else if (type == "strikethrough") { open = "<s>";          close = "</s>"; }
+            else if (type == "code")          { open = "<tt>";         close = "</tt>"; }
+            else if (type == "pre")           { open = "<tt>";         close = "</tt>"; }
+            else if (type == "spoiler")       { open = "<span foreground='#888888'>"; close = "</span>"; }
+            else if (type == "text_link" || type == "url" || type == "mention") {
+                open  = "<span foreground='#62bcf9'>";
+                close = "</span>";
             }
-        }
-        
-        if (type == "custom_emoji") {
-            // Placeholder for premium emoji rendering
-            result += "[Emoji:" + e.value("custom_emoji_id", "0") + "]";
-        } else {
-            // Add entity text (this would be styled in a full implementation)
-            result += text.substr(offset, length);
-        }
+            else { continue; }
 
-        cursor = offset + length;
+            tags.push_back({off,       open});
+            tags.push_back({off + len, close});
+        }
     }
 
-    result += text.substr(cursor);
+    std::stable_sort(tags.begin(), tags.end(), [](const Tag& a, const Tag& b){
+        return a.pos < b.pos;
+    });
+
+    std::string result;
+    int cursor = 0;
+    size_t tagIdx = 0;
+
+    while (cursor < (int)text.size() || tagIdx < tags.size()) {
+        while (tagIdx < tags.size() && tags[tagIdx].pos == cursor)
+            result += tags[tagIdx++].markup;
+        if (cursor >= (int)text.size()) break;
+        int nextTagPos = tagIdx < tags.size() ? tags[tagIdx].pos : (int)text.size();
+        result += xmlEscape(text.substr(cursor, nextTagPos - cursor));
+        cursor = nextTagPos;
+    }
     return result;
 }
 
 bool TextEngine::isOnlyEmoji(const std::string& text) {
-    // Basic emoji-only check (placeholder for fuller regex)
-    // Telegram considers 1-3 emojis as "Large"
-    return false; // To be implemented with emoji regex
+    return false;
 }
 
 } // namespace Quote

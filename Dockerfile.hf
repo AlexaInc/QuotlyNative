@@ -1,0 +1,14 @@
+# Use the pre-built image from GitHub Container Registry
+# This image ALREADY CONTAINS all 200+ global fonts, Cairo, Pango, and the compiled C++ app.
+FROM ghcr.io/alexainc/quotlynative:latest
+
+# Hugging Face Spaces run containers as an unprivileged user (UID 1000)
+# We need to make sure the app directory is writable by this user so the C++ app
+# can safely export .png files locally before serving them over HTTP.
+USER root
+RUN chmod 777 /app
+
+# Switch to the Hugging Face standard user
+USER 1000
+
+# The base image already Exposes 7860 and runs CMD ["./quoter"]
