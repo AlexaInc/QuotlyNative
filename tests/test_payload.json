@@ -1,9 +1,13 @@
 {
   "messages": [
     {
-      "text": "Hello, this is a **bold** message from the C++ API!",
+      "text": "Hello, this is a **bold** message from the C++ API!sssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
       "entities": [
-        { "offset": 23, "length": 8, "type": "bold" }
+        {
+          "offset": 23,
+          "length": 8,
+          "type": "bold"
+        }
       ],
       "from": {
         "id": 12345,
