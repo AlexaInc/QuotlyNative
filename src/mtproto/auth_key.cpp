@@ -76,31 +76,32 @@ static void derive_tmp_aes(
     Bytes& aes_key, Bytes& aes_iv)
 {
     using namespace Crypto;
-    // Per spec:
-    // SHA1(new_nonce + server_nonce)
-    // SHA1(server_nonce + new_nonce)
-    // SHA1(new_nonce + new_nonce)
-    Bytes nn(new_nonce), sn(server_nonce);
+    // Spec: nn(32), sn(16)
+    Bytes nn = new_nonce; if (nn.size() > 32) nn.resize(32);
+    Bytes sn = server_nonce; if (sn.size() > 16) sn.resize(16);
 
+    // h1 = sha1(nn + sn)
     Bytes h1_input; h1_input.insert(h1_input.end(), nn.begin(), nn.end()); h1_input.insert(h1_input.end(), sn.begin(), sn.end());
     Bytes h1 = sha1(h1_input);
 
+    // h2 = sha1(sn + nn)
     Bytes h2_input; h2_input.insert(h2_input.end(), sn.begin(), sn.end()); h2_input.insert(h2_input.end(), nn.begin(), nn.end());
     Bytes h2 = sha1(h2_input);
 
+    // h3 = sha1(nn + nn)
     Bytes h3_input; h3_input.insert(h3_input.end(), nn.begin(), nn.end()); h3_input.insert(h3_input.end(), nn.begin(), nn.end());
     Bytes h3 = sha1(h3_input);
 
-    // aes_key = h1[0:20] + h2[0:12]   (32 bytes)
+    // aes_key = h1[0:20] + h2[0:12]
     aes_key.clear();
-    aes_key.insert(aes_key.end(), h1.begin(), h1.end());         // 20 bytes
-    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);  // 12 bytes
+    aes_key.insert(aes_key.end(), h1.begin(), h1.end());
+    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);
 
-    // aes_iv = h2[12:20] + h3[0:20] + new_nonce[0:4]  (32 bytes)
+    // aes_iv = h2[12:20] + h3[0:20] + nn[0:4]
     aes_iv.clear();
-    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());      // 8 bytes
-    aes_iv.insert(aes_iv.end(), h3.begin(),       h3.end());     // 20 bytes
-    aes_iv.insert(aes_iv.end(), nn.begin(),        nn.begin() + 4); // 4 bytes
+    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());
+    aes_iv.insert(aes_iv.end(), h3.begin(),       h3.end());
+    aes_iv.insert(aes_iv.end(), nn.begin(),        nn.begin() + 4);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

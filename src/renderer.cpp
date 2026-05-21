@@ -25,6 +25,42 @@ static RGBA hexToRGBA(const std::string& hex) {
     return {r / 255.0, g / 255.0, b / 255.0, a};
 }
 
+struct ImageSize { int w=0, h=0; };
+static ImageSize getImageSize(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return {0,0};
+    uint8_t buf[32];
+    if (fread(buf, 1, 32, f) < 8) { fclose(f); return {0,0}; }
+    ImageSize res = {0,0};
+    if (buf[0]==0x89 && buf[1]=='P' && buf[2]=='N' && buf[3]=='G') {
+        // PNG
+        fseek(f, 16, SEEK_SET);
+        uint8_t d[8]; fread(d, 1, 8, f);
+        res.w = (d[0]<<24)|(d[1]<<16)|(d[2]<<8)|d[3];
+        res.h = (d[4]<<24)|(d[5]<<16)|(d[6]<<8)|d[7];
+    } else if (buf[0]==0xFF && buf[1]==0xD8) {
+        // JPEG
+        fseek(f, 2, SEEK_SET);
+        while (true) {
+            uint8_t marker[2]; if (fread(marker, 1, 2, f) < 2) break;
+            if (marker[0] != 0xFF) break;
+            if (marker[1] >= 0xC0 && marker[1] <= 0xC3) {
+                fseek(f, 3, SEEK_CUR);
+                uint8_t d[4]; fread(d, 1, 4, f);
+                res.h = (d[0]<<8)|d[1];
+                res.w = (d[2]<<8)|d[3];
+                break;
+            } else {
+                uint8_t l[2]; fread(l, 1, 2, f);
+                int len = (l[0]<<8)|l[1];
+                fseek(f, len - 2, SEEK_CUR);
+            }
+        }
+    }
+    fclose(f);
+    return res;
+}
+
 static const std::string& nameColor(int userId) {
     using namespace Style;
     return kNameColors[std::abs(userId) % kNameColors.size()];
@@ -209,26 +245,38 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
 
         double replyH = msg.reply.hasReply ? 40 : 0;
         double photoH = 0;
+        double photoW = 0;
         bool barePHoto = isPhoto && !msg.photoPath.empty() && !hasText;
         if (isPhoto && !msg.photoPath.empty()) {
-            photoH = kPhotoMaxH;
+            ImageSize isz = getImageSize(msg.photoPath);
+            if (isz.w > 0 && isz.h > 0) {
+                double ratio = (double)isz.w / isz.h;
+                if (ratio > (kPhotoMaxW / kPhotoMaxH)) {
+                    photoW = kPhotoMaxW;
+                    photoH = kPhotoMaxW / ratio;
+                } else {
+                    photoH = kPhotoMaxH;
+                    photoW = kPhotoMaxH * ratio;
+                }
+            } else {
+                photoW = kPhotoMaxW; photoH = kPhotoMaxH;
+            }
         }
 
         double contentW = (double)tw;
         if (barePHoto) {
-            // captionless photo: size = exactly the photo dimensions
-            contentW = kPhotoMaxW;
+            contentW = photoW;
         } else if (isPhoto) {
-            contentW = std::max(contentW, kPhotoMaxW);
+            contentW = std::max(contentW, photoW);
         }
         double msgW = std::max({contentW, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
-        if (barePHoto) msgW = kPhotoMaxW; // no extra padding for bare photos
+        if (barePHoto) msgW = photoW; 
         msgW = std::clamp(msgW, kMsgMinWidth, kMsgMaxWidth);
-        maxW = std::max(maxW, barePHoto ? 0.0 : msgW); // bare photos don't widen all bubbles
+        maxW = std::max(maxW, barePHoto ? 0.0 : msgW);
 
         double msgH = barePHoto
-                    ? kPhotoMaxH + 4                                                     // bare: photo height only
-                    : kPadTop + nameH + replyH + (hasText ? th : 0) + photoH + kPadBottom;
+                    ? photoH + 4
+                    : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom;
         sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW, false});
         totalH += msgH + 4;
         g_object_unref(tl); pango_font_description_free(td);
@@ -336,9 +384,14 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         // ── PHOTO inside bubble with thin rounded border ─────────────────
         if (msg.mediaType == MediaType::Photo && !msg.photoPath.empty()) {
             bool barePhotoRender = !hasText;
-            double px = barePhotoRender ? bubbleX : bubbleX + kPadLeft;
-            double pw = barePhotoRender ? sz.bubbleW : maxW - kPadLeft - kPadRight;
             double ph = sz.photoH;
+            double ratio = 1.0;
+            ImageSize isz = getImageSize(msg.photoPath);
+            if (isz.w > 0 && isz.h > 0) ratio = (double)isz.w / isz.h;
+            double pw = ph * ratio;
+
+            double px = barePhotoRender ? bubbleX : bubbleX + (maxW - kPadLeft - kPadRight - pw)/2 + kPadLeft;
+            if (!barePhotoRender) px = bubbleX + kPadLeft; // align left if in bubble
             // Rounded rect with thin border
             cairo_new_path(cr);
             cairo_arc(cr, px + kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, M_PI, 3*M_PI/2);
