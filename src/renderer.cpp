@@ -153,7 +153,15 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
     double totalH = 0;
     double maxW = kMsgMinWidth;
 
-    for (const auto& msg : messages) {
+    std::vector<bool> firstInGroup(messages.size());
+    std::vector<bool> lastInGroup(messages.size());
+    for (size_t i = 0; i < messages.size(); ++i) {
+        firstInGroup[i] = (i == 0 || messages[i-1].senderId != messages[i].senderId);
+        lastInGroup[i]  = (i == messages.size() - 1 || messages[i+1].senderId != messages[i].senderId);
+    }
+
+    for (size_t i = 0; i < messages.size(); ++i) {
+        const auto& msg = messages[i];
         PangoLayout* tl = pango_cairo_create_layout(measure_cr);
         PangoFontDescription* td = pango_font_description_from_string("Inter 14");
         pango_layout_set_font_description(tl, td);
@@ -162,7 +170,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         int tw, th; measureLayout(tl, maxTextWidth, tw, th);
 
         double nameH = 0, nameW = 0;
-        if (!msg.senderName.empty()) {
+        if (firstInGroup[i] && !msg.senderName.empty()) {
             PangoLayout* nl = pango_cairo_create_layout(measure_cr);
             PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 13");
             pango_layout_set_font_description(nl, nd);
@@ -194,8 +202,6 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
     if (options.transparent) { cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE); cairo_set_source_rgba(cr, 0, 0, 0, 0); cairo_paint(cr); }
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
-    drawAvatar(cr, kCanvasPad, canvasH - kCanvasPad - kAvatarSize, kAvatarSize, messages[0].senderName, messages[0].senderId);
-
     double curY = kCanvasPad;
     double bubbleX = kCanvasPad + kAvatarSize + kAvatarMarginRight;
 
@@ -204,15 +210,20 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         const auto& sz = sizes[i];
         RenderOptions mOpts = options;
         mOpts.isOut = msg.isOutgoing;
-        mOpts.rounding.topLeft = (i == 0) ? CornerRounding::Large : CornerRounding::Small;
-        mOpts.rounding.topRight = (i == 0) ? CornerRounding::Large : CornerRounding::Small;
-        mOpts.rounding.bottomLeft = (i == messages.size() - 1) ? CornerRounding::Tail : CornerRounding::Small;
+        mOpts.rounding.topLeft = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
+        mOpts.rounding.topRight = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
+        mOpts.rounding.bottomLeft = (lastInGroup[i]) ? CornerRounding::Tail : CornerRounding::Small;
         mOpts.rounding.bottomRight = CornerRounding::Large;
 
         drawBubble(cr, bubbleX, curY, maxW, sz.h, mOpts);
 
+        if (lastInGroup[i]) {
+            double avatarY = curY + sz.h - kAvatarSize;
+            drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
+        }
+
         double py = curY + kPadTop;
-        if (!msg.senderName.empty()) {
+        if (firstInGroup[i] && !msg.senderName.empty()) {
              auto color = hexToRGBA(nameColor(msg.senderId));
              cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
              PangoLayout* nl = pango_cairo_create_layout(cr);
