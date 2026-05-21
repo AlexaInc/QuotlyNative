@@ -1,0 +1,54 @@
+{
+  "messages": [
+    {
+      "firstName": "Hansaka",
+      "lastName": "Alexa",
+      "nameColorId": 2,
+      "message": "Welcome to the new C++ Quote Engine! 🚀",
+      "entities": [
+        {
+          "offset": 15,
+          "length": 17,
+          "type": "bold"
+        },
+        {
+          "offset": 37,
+          "length": 2,
+          "type": "custom_emoji",
+          "custom_emoji_id": "5352552264781290450"
+        }
+      ]
+    },
+    {
+      "firstName": "Hansaka",
+      "lastName": "Alexa",
+      "nameColorId": 2,
+      "message": "This is a consecutive message from me!"
+    },
+    {
+      "firstName": "Developer",
+      "nameColorId": 5,
+      "message": "Nice! Here's a photo for you:",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+      "mediaType": "photo"
+    },
+    {
+      "firstName": "Developer",
+      "nameColorId": 5,
+      "message": "",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+      "mediaType": "sticker"
+    },
+    {
+      "firstName": "Hansaka",
+      "lastName": "Alexa",
+      "nameColorId": 2,
+      "message": "Looks great!",
+      "replySender": "Developer",
+      "replyMessage": "Nice! Here's a photo for you:",
+      "replySenderColor": 5
+    }
+  ],
+  "transparent": true,
+  "emojiProvider": "apple"
+}

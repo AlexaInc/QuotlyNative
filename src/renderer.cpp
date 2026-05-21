@@ -148,7 +148,14 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
     cairo_t* measure_cr = cairo_create(measure_surf);
     int maxTextWidth = (int)(kMsgMaxWidth - kPadLeft - kPadRight);
 
-    struct MsgSize { double h; double textH; double nameH; double replyH; double photoH; double bubbleW; };
+    // Sticker constants
+    constexpr double kStickerSize = 160; // medium thumbnail
+    constexpr double kPhotoMaxW   = 280; // photo inside bubble
+    constexpr double kPhotoMaxH   = 280;
+    constexpr double kPhotoBorderR = 12; // thin border radius
+    constexpr double kPhotoBorder  = 2;  // border thickness
+
+    struct MsgSize { double h; double textH; double nameH; double replyH; double photoH; double bubbleW; bool isSticker; };
     std::vector<MsgSize> sizes;
     double totalH = 0;
     double maxW = kMsgMinWidth;
@@ -162,12 +169,26 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
 
     for (size_t i = 0; i < messages.size(); ++i) {
         const auto& msg = messages[i];
+        bool isSticker = (msg.mediaType == MediaType::Sticker);
+        bool isPhoto   = (msg.mediaType == MediaType::Photo);
+
+        if (isSticker) {
+            // Sticker: medium thumbnail, no bubble
+            double stickerH = kStickerSize + 8; // small margin
+            sizes.push_back({stickerH, 0, 0, 0, kStickerSize, kStickerSize, true});
+            maxW = std::max(maxW, kStickerSize + kPadLeft + kPadRight);
+            totalH += stickerH + 4;
+            continue;
+        }
+
         PangoLayout* tl = pango_cairo_create_layout(measure_cr);
         PangoFontDescription* td = pango_font_description_from_string("Inter 14");
         pango_layout_set_font_description(tl, td);
         if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
         else pango_layout_set_text(tl, msg.text.c_str(), -1);
-        int tw, th; measureLayout(tl, maxTextWidth, tw, th);
+        int tw = 0, th = 0;
+        bool hasText = !msg.text.empty() || !msg.pangoMarkup.empty();
+        if (hasText) measureLayout(tl, maxTextWidth, tw, th);
 
         double nameH = 0, nameW = 0;
         if (firstInGroup[i] && !msg.senderName.empty()) {
@@ -181,14 +202,19 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         }
 
         double replyH = msg.reply.hasReply ? 40 : 0;
-        double photoH = msg.photoPath.empty() ? 0 : 200; // Simplified photo height
+        double photoH = 0;
+        if (isPhoto && !msg.photoPath.empty()) {
+            photoH = kPhotoMaxH + 8; // photo with margin
+        }
 
-        double msgW = std::max({(double)tw, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
+        double contentW = (double)tw;
+        if (isPhoto) contentW = std::max(contentW, kPhotoMaxW);
+        double msgW = std::max({contentW, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
         msgW = std::clamp(msgW, kMsgMinWidth, kMsgMaxWidth);
         maxW = std::max(maxW, msgW);
 
-        double msgH = kPadTop + nameH + replyH + th + photoH + kPadBottom;
-        sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW});
+        double msgH = kPadTop + nameH + replyH + (hasText ? th : 0) + photoH + kPadBottom;
+        sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW, false});
         totalH += msgH + 4;
         g_object_unref(tl); pango_font_description_free(td);
     }
@@ -208,6 +234,44 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
     for (size_t i = 0; i < messages.size(); ++i) {
         const auto& msg = messages[i];
         const auto& sz = sizes[i];
+
+        // ── STICKER: bare thumbnail, no bubble ──────────────────────────
+        if (sz.isSticker) {
+            if (lastInGroup[i]) {
+                double avatarY = curY + sz.h - kAvatarSize;
+                drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
+            }
+            // Draw sticker thumbnail (placeholder with rounded corners)
+            double sx = bubbleX;
+            double sy = curY + 4;
+            double sw = kStickerSize;
+            double sh = kStickerSize;
+            double sr = 8;
+            // Rounded rect clip for sticker
+            cairo_new_path(cr);
+            cairo_arc(cr, sx + sr, sy + sr, sr, M_PI, 3*M_PI/2);
+            cairo_arc(cr, sx + sw - sr, sy + sr, sr, 3*M_PI/2, 2*M_PI);
+            cairo_arc(cr, sx + sw - sr, sy + sh - sr, sr, 0, M_PI/2);
+            cairo_arc(cr, sx + sr, sy + sh - sr, sr, M_PI/2, M_PI);
+            cairo_close_path(cr);
+            cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.6);
+            cairo_fill(cr);
+            // Sticker emoji placeholder text
+            PangoLayout* sl = pango_cairo_create_layout(cr);
+            PangoFontDescription* sd = pango_font_description_from_string("Inter 40");
+            pango_layout_set_font_description(sl, sd);
+            pango_layout_set_text(sl, "\xF0\x9F\x96\xBC", -1); // 🖼 placeholder
+            int stw, sth; pango_layout_get_pixel_size(sl, &stw, &sth);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
+            cairo_move_to(cr, sx + (sw - stw)/2, sy + (sh - sth)/2);
+            pango_cairo_show_layout(cr, sl);
+            g_object_unref(sl); pango_font_description_free(sd);
+
+            curY += sz.h + 4;
+            continue;
+        }
+
+        // ── NORMAL / PHOTO: draw bubble ──────────────────────────────────
         RenderOptions mOpts = options;
         mOpts.isOut = msg.isOutgoing;
         mOpts.rounding.topLeft = (firstInGroup[i]) ? CornerRounding::Large : CornerRounding::Small;
@@ -240,25 +304,51 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             py += sz.replyH;
         }
 
-        if (!msg.photoPath.empty()) {
-            // Draw photo placeholder (actual loading needs more robust logic)
-            cairo_set_source_rgba(cr, 0.2, 0.2, 0.2, 1);
-            cairo_rectangle(cr, bubbleX + kPadLeft, py, maxW - kPadLeft - kPadRight, sz.photoH - 8);
-            cairo_fill(cr);
+        // ── PHOTO inside bubble with thin rounded border ─────────────────
+        if (msg.mediaType == MediaType::Photo && !msg.photoPath.empty()) {
+            double px = bubbleX + kPadLeft;
+            double pw = maxW - kPadLeft - kPadRight;
+            double ph = sz.photoH - 8;
+            // Rounded rect with thin border
+            cairo_new_path(cr);
+            cairo_arc(cr, px + kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, M_PI, 3*M_PI/2);
+            cairo_arc(cr, px + pw - kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, 3*M_PI/2, 2*M_PI);
+            cairo_arc(cr, px + pw - kPhotoBorderR, py + ph - kPhotoBorderR, kPhotoBorderR, 0, M_PI/2);
+            cairo_arc(cr, px + kPhotoBorderR, py + ph - kPhotoBorderR, kPhotoBorderR, M_PI/2, M_PI);
+            cairo_close_path(cr);
+            cairo_set_source_rgba(cr, 0.15, 0.15, 0.18, 1);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 0.35, 0.35, 0.4, 0.6);
+            cairo_set_line_width(cr, kPhotoBorder);
+            cairo_stroke(cr);
+            // Photo placeholder icon
+            PangoLayout* pl = pango_cairo_create_layout(cr);
+            PangoFontDescription* pd = pango_font_description_from_string("Inter 28");
+            pango_layout_set_font_description(pl, pd);
+            pango_layout_set_text(pl, "\xF0\x9F\x96\xBC", -1);
+            int ptw, pth; pango_layout_get_pixel_size(pl, &ptw, &pth);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.4);
+            cairo_move_to(cr, px + (pw - ptw)/2, py + (ph - pth)/2);
+            pango_cairo_show_layout(cr, pl);
+            g_object_unref(pl); pango_font_description_free(pd);
             py += sz.photoH;
         }
 
-        PangoLayout* tl = pango_cairo_create_layout(cr);
-        PangoFontDescription* td = pango_font_description_from_string("Inter 14");
-        pango_layout_set_font_description(tl, td);
-        pango_layout_set_width(tl, (maxW - kPadLeft - kPadRight) * PANGO_SCALE);
-        if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
-        else pango_layout_set_text(tl, msg.text.c_str(), -1);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_move_to(cr, bubbleX + kPadLeft, py);
-        pango_cairo_show_layout(cr, tl);
+        // ── Text ─────────────────────────────────────────────────────────
+        bool hasText = !msg.text.empty() || !msg.pangoMarkup.empty();
+        if (hasText) {
+            PangoLayout* tl = pango_cairo_create_layout(cr);
+            PangoFontDescription* td = pango_font_description_from_string("Inter 14");
+            pango_layout_set_font_description(tl, td);
+            pango_layout_set_width(tl, (maxW - kPadLeft - kPadRight) * PANGO_SCALE);
+            if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
+            else pango_layout_set_text(tl, msg.text.c_str(), -1);
+            cairo_set_source_rgb(cr, 1, 1, 1);
+            cairo_move_to(cr, bubbleX + kPadLeft, py);
+            pango_cairo_show_layout(cr, tl);
+            g_object_unref(tl); pango_font_description_free(td);
+        }
 
-        py += sz.textH; g_object_unref(tl); pango_font_description_free(td);
         curY += sz.h + 4;
     }
 
