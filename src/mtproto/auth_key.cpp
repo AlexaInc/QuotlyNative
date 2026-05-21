@@ -130,6 +130,7 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
     if (cid != TL::resPQ)
         throw std::runtime_error("Expected resPQ, got: " + std::to_string(cid));
 
+    r_resPQ.readInt128(); // skip the echoed client nonce
     Bytes server_nonce_r = r_resPQ.readInt128();  // server's nonce
     Bytes server_nonce(server_nonce_r.begin(), server_nonce_r.end());
     // (resPQ nonce echo fits nonce we sent)
