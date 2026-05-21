@@ -31,20 +31,7 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# 1. EXTRACT PREBUILT NATIVE BINARIES FROM THE NUGET PACKAGE (No building!)
-WORKDIR /tmp
-RUN curl -L -o tdlib.zip https://www.nuget.org/api/v2/package/tdlib.native.linux-x64/1.8.63 && \
-    unzip -q tdlib.zip -d tdlib_extracted && \
-    cp -r tdlib_extracted/runtimes/linux-x64/native/* /usr/local/lib/ && \
-    rm -rf tdlib.zip tdlib_extracted
-
-# 2. GRAB ONLY THE HEADER INTERFACES FROM GITHUB (No building!)
-RUN GIT_SSL_NO_VERIFY=true git clone --depth 1 https://github.com/tdlib/td.git /tmp/td-src && \
-    mkdir -p /usr/local/include/td/telegram/ && \
-    cp /tmp/td-src/td/telegram/td_json_client.h /usr/local/include/td/telegram/ && \
-    cp /tmp/td-src/td/telegram/td_log.h /usr/local/include/td/telegram/ && \
-    cp /tmp/td-src/td/telegram/tdjson_export.h /usr/local/include/td/telegram/ && \
-    rm -rf /tmp/td-src
+# No TDLib required – MTProto client is pure C++
 
 # Download Crow (C++ Web Framework) header
 RUN wget -q -O /usr/include/crow.h https://github.com/CrowCpp/Crow/releases/download/v1.0+5/crow_all.h

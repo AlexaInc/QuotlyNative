@@ -1,3 +1,6 @@
+// this file is part of AlexaInc / QuotlyNative — Cairo Renderer
+// developer hansaka@alexainc
+
 #pragma once
 #include <string>
 #include <vector>

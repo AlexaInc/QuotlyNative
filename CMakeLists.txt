@@ -7,8 +7,8 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CAIRO REQUIRED cairo)
 pkg_check_modules(PANGO REQUIRED pango pangocairo)
-
-# Crow is header-only, but needs some flags
+find_package(OpenSSL REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 
 # Include directories
@@ -25,6 +25,12 @@ set(SOURCES
     src/renderer.cpp
     src/text_engine.cpp
     src/tg_client.cpp
+    src/mtproto/crypto.cpp
+    src/mtproto/tl.cpp
+    src/mtproto/transport.cpp
+    src/mtproto/auth_key.cpp
+    src/mtproto/session.cpp
+    src/mtproto/client.cpp
 )
 
 add_executable(QuoteAPI ${SOURCES})
@@ -34,5 +40,7 @@ target_link_libraries(QuoteAPI
     ${CAIRO_LIBRARIES}
     ${PANGO_LIBRARIES}
     Threads::Threads
-    tdjson
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    Boost::system
 )
