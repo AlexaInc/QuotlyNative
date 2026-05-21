@@ -24,12 +24,21 @@ struct BubbleRounding {
     CornerRounding bottomRight = CornerRounding::Large;
 };
 
+struct ReplyData {
+    std::string text;
+    std::string senderName;
+    int senderId = 0;
+    bool hasReply = false;
+};
+
 struct MessageData {
     std::string text;                  // raw text
     std::string pangoMarkup;           // processed Pango markup from TextEngine
     std::string senderName;            // "First Last"
     int         senderId    = 0;       // used to pick name color
     bool        isOutgoing  = false;
+    ReplyData   reply;
+    std::string photoPath;             // path to downloaded photo (if any)
 };
 
 struct RenderOptions {
@@ -42,24 +51,24 @@ struct RenderOptions {
 
 class Renderer {
 public:
-    // Render a single quote message to PNG file
+    // Render a group of quote messages to PNG file
     static void renderQuote(
         const std::string& outputFile,
-        const MessageData& msg,
+        const std::vector<MessageData>& messages,
         const RenderOptions& options);
 
 private:
-    // Draw a rounded-rect bubble with optional tail
     static void drawBubble(cairo_t* cr, double x, double y,
                             double width, double height,
                             const RenderOptions& options);
 
-    // Draw a circular avatar placeholder with initials
     static void drawAvatar(cairo_t* cr, double x, double y,
                             double size, const std::string& name,
                             int userId);
 
-    // Measure Pango layout and return width, height
+    static void drawReply(cairo_t* cr, double x, double y,
+                           double width, const ReplyData& reply);
+
     static void measureLayout(PangoLayout* layout, int maxWidth,
                                int& outWidth, int& outHeight);
 };
