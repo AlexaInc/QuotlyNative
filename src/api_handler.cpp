@@ -69,18 +69,32 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
             // ── Field Aliasing: text / message ──────────────────────────────
             msg.text = item.value("text", item.value("message", ""));
             
-            // ── Field Aliasing: from / firstName ────────────────────────────
+            // ── User Identity & Grouping Key ─────────────────────────────────
+            int64_t uid = 0;
+            bool hasUid = false;
+            if (item.contains("from") && item["from"].contains("id")) {
+                uid = item["from"]["id"];
+                hasUid = true;
+            } else if (item.contains("id")) {
+                uid = item.value("id", 0LL);
+                hasUid = true;
+            }
+
+            int nci = item.value("nameColorId", 0);
+            std::string fn = item.value("firstName", "");
+            std::string ln = item.value("lastName", "");
             if (item.contains("from")) {
-                const auto& from = item["from"];
-                msg.senderName = from.value("first_name", "");
-                std::string ln = from.value("last_name", "");
-                if (!ln.empty()) msg.senderName += " " + ln;
-                msg.senderId = from.value("id", 0);
-            } else if (item.contains("firstName")) {
-                msg.senderName = item.value("firstName", "");
-                std::string ln = item.value("lastName", "");
-                if (!ln.empty()) msg.senderName += " " + ln;
-                msg.senderId = item.value("nameColorId", 0);
+                fn = item["from"].value("first_name", fn);
+                ln = item["from"].value("last_name", ln);
+            }
+            msg.senderName = fn;
+            if (!ln.empty()) msg.senderName += " " + ln;
+            msg.senderId = hasUid ? (int)uid : nci;
+
+            if (hasUid) {
+                msg.senderKey = "id:" + std::to_string(uid);
+            } else {
+                msg.senderKey = "name:" + fn + "|" + ln + "|color:" + std::to_string(nci);
             }
 
             // Entities

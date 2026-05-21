@@ -184,9 +184,17 @@ std::pair<uint32_t, uint32_t> factorize_pq(const Bytes& pq_bytes) {
 // TL-serialized: write n as byte-string prefixed with length, same for e
 // fingerprint = last 8 bytes of SHA1(n_bytes_with_len + e_bytes_with_len) as LE int64
 
-Bytes tl_encode_bytes_simple(const Bytes& data) {
+Bytes tl_encode_bytes_correct(const Bytes& data) {
     Bytes out;
-    out.push_back(static_cast<uint8_t>(data.size())); // simplified (assumes size < 254)
+    size_t len = data.size();
+    if (len < 254) {
+        out.push_back(static_cast<uint8_t>(len));
+    } else {
+        out.push_back(0xfe);
+        out.push_back(len & 0xff);
+        out.push_back((len >> 8) & 0xff);
+        out.push_back((len >> 16) & 0xff);
+    }
     out.insert(out.end(), data.begin(), data.end());
     // pad to 4-byte alignment
     while (out.size() % 4 != 0) out.push_back(0);
@@ -195,8 +203,8 @@ Bytes tl_encode_bytes_simple(const Bytes& data) {
 
 int64_t rsa_fingerprint(const Bytes& n, const Bytes& e) {
     Bytes combined;
-    auto nb = tl_encode_bytes_simple(n);
-    auto eb = tl_encode_bytes_simple(e);
+    auto nb = tl_encode_bytes_correct(n);
+    auto eb = tl_encode_bytes_correct(e);
     combined.insert(combined.end(), nb.begin(), nb.end());
     combined.insert(combined.end(), eb.begin(), eb.end());
     Bytes h = sha1(combined);
