@@ -53,6 +53,10 @@ static std::string saveBase64ToTemp(const std::string& b64Data, const std::strin
 void ApiHandler::setupRoutes(crow::SimpleApp& app) {
     CROW_ROUTE(app, "/quote").methods(crow::HTTPMethod::POST)(handleQuoteRequest);
     CROW_ROUTE(app, "/api/generate").methods(crow::HTTPMethod::POST)(handleQuoteRequest); // JS API Alias
+    CROW_ROUTE(app, "/debug/logs").methods(crow::HTTPMethod::GET)([](){
+        // Return some recent log lines (we don't have a buffer, so just a placeholder or we can read from a file if we redirected stderr/stdout)
+        return crow::response("Check container logs in HF interface for now. Log redirection not implemented yet.");
+    });
 }
 
 crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {

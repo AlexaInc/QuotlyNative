@@ -54,8 +54,8 @@ std::string TextEngine::processEntities(const std::string& text,
             }
             else if (type == "custom_emoji") {
                 uint64_t eid = e.value("custom_emoji_id", 0ULL);
-                // We use a zero-width space or original text with a sentinel font face
-                open = "<span face='EmojiPlaceholder' foreground='#00000000'>"; 
+                // We use alpha='0' to hide the placeholder and face='EmojiPlaceholder' for detection
+                open = "<span face='EmojiPlaceholder' alpha='0'>"; 
                 close = "</span>";
             }
             else { continue; }

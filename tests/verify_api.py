@@ -5,43 +5,20 @@ url = "https://quotlytga-quotecpp.hf.space/api/generate"
 
 tests = [
     {
-        "name": "Full Premium",
+        "name": "High Fidelity Premium Test",
         "payload": {
             "messages": [
                 {
                     "from": {
                         "id": 12345678,
-                        "first_name": "Premium_User",
+                        "first_name": "Premium User",
                         "emoji_status_custom_emoji_id": 5352552264781290450
                     },
-                    "text": "Hello Premium!",
+                    "text": "Hello, this is a premium emoji E test.",
                     "entities": [
                         {
-                            "offset": 6,
-                            "length": 7,
-                            "type": "custom_emoji",
-                            "custom_emoji_id": 5352552264781290450
-                        }
-                    ]
-                }
-            ]
-        }
-    },
-    {
-        "name": "Multi Message Mixed",
-        "payload": {
-            "messages": [
-                {
-                    "from": {
-                        "id": 12345678,
-                        "first_name": "Premium_User",
-                        "emoji_status_custom_emoji_id": 5352552264781290450
-                    },
-                    "text": "Hello, I am premium! 🌟",
-                    "entities": [
-                        {
-                            "offset": 22,
-                            "length": 2,
+                            "offset": 31,
+                            "length": 1,
                             "type": "custom_emoji",
                             "custom_emoji_id": 5352552264781290450
                         }
@@ -50,12 +27,20 @@ tests = [
                 {
                     "from": {
                         "id": 87654321,
-                        "first_name": "Normal_User"
+                        "first_name": "Normal User"
                     },
-                    "text": "And I am a normal user.",
+                    "text": "Wow, looks cool! E",
+                    "entities": [
+                        {
+                            "offset": 17,
+                            "length": 1,
+                            "type": "custom_emoji",
+                            "custom_emoji_id": 5352552264781290450
+                        }
+                    ],
                     "reply_to_message": {
-                        "from": { "id": 12345678, "first_name": "Premium_User" },
-                        "text": "Hello, I am premium! 🌟"
+                        "from": { "id": 12345678, "first_name": "Premium User" },
+                        "text": "Hello, this is a premium emoji E test."
                     }
                 }
             ]
@@ -65,11 +50,15 @@ tests = [
 
 for t in tests:
     print(f"Running test: {t['name']}")
-    r = requests.post(url, json=t['payload'])
-    print(f"Status: {r.status_code}")
-    if r.status_code == 200:
-        with open(f"test_{t['name'].replace(' ', '_')}.png", "wb") as f:
-            f.write(r.content)
-        print(f"Saved to test_{t['name'].replace(' ', '_')}.png")
-    else:
-        print(f"Error: {r.text}")
+    try:
+        r = requests.post(url, json=t['payload'], timeout=30)
+        print(f"Status: {r.status_code}")
+        if r.status_code == 200:
+            filename = f"test_{t['name'].replace(' ', '_')}.png"
+            with open(filename, "wb") as f:
+                f.write(r.content)
+            print(f"Saved to {filename}")
+        else:
+            print(f"Error: {r.text}")
+    except Exception as e:
+        print(f"Request failed: {e}")
