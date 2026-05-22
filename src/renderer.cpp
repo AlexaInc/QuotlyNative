@@ -209,11 +209,15 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         bool isPhoto   = (msg.mediaType == MediaType::Photo);
 
         if (isSticker) {
-            // Sticker: medium thumbnail, no bubble
-            double stickerH = kStickerSize + 8; // small margin
-            sizes.push_back({stickerH, 0, 0, 0, kStickerSize, kStickerSize, true});
-            maxW = std::max(maxW, kStickerSize + kPadLeft + kPadRight);
-            totalH += stickerH + 4;
+            ImageSize isz = getImageSize(msg.photoPath);
+            double sw = kStickerSize, sh = kStickerSize;
+            if (isz.w > 0 && isz.h > 0) {
+                double r = (double)isz.w / isz.h;
+                if (r > 1.0) sh = sw / r; else sw = sh * r;
+            }
+            sizes.push_back({sh + 8, 0, 0, 0, sh, sw, true});
+            maxW = std::max(maxW, sw + kPadLeft + kPadRight);
+            totalH += (sh + 8) + 4;
             continue;
         }
 

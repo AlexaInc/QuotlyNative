@@ -78,30 +78,30 @@ static void derive_tmp_aes(
     using namespace Crypto;
     // Spec: nn(32), sn(16)
     Bytes nn = new_nonce; if (nn.size() > 32) nn.resize(32);
+    if (nn.size() < 32) { Bytes b(32,0); std::memcpy(b.data(), nn.data(), nn.size()); nn=b; }
     Bytes sn = server_nonce; if (sn.size() > 16) sn.resize(16);
+    if (sn.size() < 16) { Bytes b(16,0); std::memcpy(b.data(), sn.data(), sn.size()); sn=b; }
 
-    // h1 = sha1(nn + sn)
+    // SHA1(new_nonce + server_nonce)
     Bytes h1_input; h1_input.insert(h1_input.end(), nn.begin(), nn.end()); h1_input.insert(h1_input.end(), sn.begin(), sn.end());
     Bytes h1 = sha1(h1_input);
 
-    // h2 = sha1(sn + nn)
+    // SHA1(server_nonce + new_nonce)
     Bytes h2_input; h2_input.insert(h2_input.end(), sn.begin(), sn.end()); h2_input.insert(h2_input.end(), nn.begin(), nn.end());
     Bytes h2 = sha1(h2_input);
 
-    // h3 = sha1(nn + nn)
+    // SHA1(new_nonce + new_nonce)
     Bytes h3_input; h3_input.insert(h3_input.end(), nn.begin(), nn.end()); h3_input.insert(h3_input.end(), nn.begin(), nn.end());
     Bytes h3 = sha1(h3_input);
 
-    // aes_key = h1[0:20] + h2[0:12]
     aes_key.clear();
-    aes_key.insert(aes_key.end(), h1.begin(), h1.end());
-    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);
+    aes_key.insert(aes_key.end(), h1.begin(), h1.end());         // 20
+    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);  // 12
 
-    // aes_iv = h2[12:20] + h3[0:20] + nn[0:4]
     aes_iv.clear();
-    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());
-    aes_iv.insert(aes_iv.end(), h3.begin(),       h3.end());
-    aes_iv.insert(aes_iv.end(), nn.begin(),        nn.begin() + 4);
+    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());      // 8
+    aes_iv.insert(aes_iv.end(), h3.begin(),       h3.end());     // 20
+    aes_iv.insert(aes_iv.end(), nn.begin(),        nn.begin() + 4); // 4
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
