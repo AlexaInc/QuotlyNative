@@ -16,24 +16,30 @@
       "id": 100
     },
     {
-      "firstName": "Hansaka",
-      "nameColorId": 2,
-      "message": "",
-      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABACAYAAABfU79XAAAAVklEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMcgAAB9067mAAAAABJRU5ErkJggg==",
-      "mediaType": "sticker",
-      "id": 100
-    },
-    {
       "firstName": "Developer",
       "nameColorId": 5,
-      "message": "And here is a tall portrait sticker (bare):",
+      "message": "Wide test (Landscape):",
       "id": 200
     },
     {
       "firstName": "Developer",
       "nameColorId": 5,
       "message": "",
-      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABQCAYAAAC6999DAAAAVklEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMcgAAB9067mAAAAABJRU5ErkJggg==",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABACAYAAABfU79XAAAAX0lEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABvBgwAAfk6PaMAAAAASUVORK5CYII=",
+      "mediaType": "photo",
+      "id": 200
+    },
+    {
+      "firstName": "Developer",
+      "nameColorId": 5,
+      "message": "Tall test (Portrait):",
+      "id": 200
+    },
+    {
+      "firstName": "Developer",
+      "nameColorId": 5,
+      "message": "",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAAV0lEQVRYR+3BMQEAAADCoPVPbQwfoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvBkaAAAB97O8XgAAAABJRU5ErkJggg==",
       "mediaType": "sticker",
       "id": 200
     },
