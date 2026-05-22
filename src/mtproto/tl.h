@@ -60,6 +60,7 @@ private:
 namespace TL {
     constexpr int32_t req_pq_multi          = (int32_t)0xbe7e8ef1u;
     constexpr int32_t resPQ                 = (int32_t)0x05162463u;
+    constexpr int32_t p_q_inner_data        = (int32_t)0x83c95aecu;
     constexpr int32_t p_q_inner_data_dc     = (int32_t)0xa9f55f95u;
     constexpr int32_t req_DH_params         = (int32_t)0xd712e4beu;
     constexpr int32_t server_DH_params_ok   = (int32_t)0xd0e8075cu;
