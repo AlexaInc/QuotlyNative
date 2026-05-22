@@ -176,6 +176,21 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                     msg.reply.senderName = rf.value("first_name", "");
                     msg.reply.senderId   = rf.value("id", 0);
                 }
+                auto rentities = r.value("entities", nlohmann::json::array());
+                msg.reply.pangoMarkup = TextEngine::processEntities(msg.reply.text, rentities);
+                if (rentities.is_array()) {
+                    for (const auto& e : rentities) {
+                        if (e.value("type", "") == "custom_emoji") {
+                            CustomEmoji ce;
+                            int off16 = e.value("offset", 0);
+                            int len16 = e.value("length", 0);
+                            ce.offset = utf16OffsetToUtf8ByteOffset(msg.reply.text, off16);
+                            ce.length = utf16OffsetToUtf8ByteOffset(msg.reply.text, off16 + len16) - ce.offset;
+                            ce.documentId = parseUInt64Json(e, "custom_emoji_id", parseUInt64Json(e, "document_id", 0));
+                            if (ce.documentId != 0) msg.reply.customEmojis.push_back(ce);
+                        }
+                    }
+                }
             } else if (item.contains("replySender")) {
                 msg.reply.hasReply = true;
                 msg.reply.senderName = item.value("replySender", "");
@@ -255,6 +270,15 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                             emojiMap[ce.documentId] = path;
                         } else {
                             apiLog("[QuoteAPI] Failed to fetch inline emoji");
+                        }
+                    }
+                }
+                for (const auto& ce : m.reply.customEmojis) {
+                    if (emojiMap.find(ce.documentId) == emojiMap.end()) {
+                        apiLog("[QuoteAPI] Fetching reply inline emoji: " + std::to_string(ce.documentId));
+                        std::string path = s_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
+                        if (!path.empty()) {
+                            emojiMap[ce.documentId] = path;
                         }
                     }
                 }

@@ -98,7 +98,7 @@ std::string TextEngine::processEntities(const std::string& text,
                 // Hide the one-character placeholder supplied by Telegram. The
                 // renderer overlays the downloaded custom-emoji image at this
                 // exact Pango index using MessageData::customEmojis.
-                open = "<span alpha='1' foreground='#FFFFFF'>";
+                open = "<span alpha='1' fallback='false' letter_spacing='14336'>";
                 close = "</span>";
             }
             else { continue; }

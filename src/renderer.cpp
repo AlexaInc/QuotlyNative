@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 
 namespace Quote {
+static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const std::string& path);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size, const st
 
 // ── drawReply ────────────────────────────────────────────────────────────────
 
-void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const ReplyData& reply) {
+void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const ReplyData& reply, const std::map<uint64_t, std::string>& emojiMap) {
     if (!reply.hasReply) return;
     using namespace Style;
 
@@ -133,10 +134,26 @@ void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const Re
     pango_layout_set_font_description(tl, td);
     pango_layout_set_width(tl, (width - 12) * PANGO_SCALE);
     pango_layout_set_ellipsize(tl, PANGO_ELLIPSIZE_END);
-    pango_layout_set_text(tl, reply.text.c_str(), -1);
+    if (!reply.pangoMarkup.empty()) pango_layout_set_markup(tl, reply.pangoMarkup.c_str(), -1);
+    else pango_layout_set_text(tl, reply.text.c_str(), -1);
     cairo_set_source_rgba(cr, 0.8, 0.8, 0.8, 0.8);
     cairo_move_to(cr, x + 8, y + 18);
     pango_cairo_show_layout(cr, tl);
+    
+    if (!reply.customEmojis.empty()) {
+        for (const auto& ce : reply.customEmojis) {
+            uint64_t eid = ce.documentId;
+            if (!emojiMap.count(eid)) continue;
+            PangoRectangle pos;
+            int byteIndex = std::clamp(ce.offset, 0, (int)reply.text.size());
+            pango_layout_index_to_pos(tl, byteIndex, &pos);
+            double emojiSize = 16;
+            double ex = x + 8 + PANGO_PIXELS(pos.x);
+            double lineH = std::max(emojiSize, (double)PANGO_PIXELS(pos.height));
+            double ey = y + 18 + PANGO_PIXELS(pos.y) + (lineH - emojiSize) / 2.0;
+            drawEmojiSurface(cr, ex, ey, emojiSize, emojiMap.at(eid));
+        }
+    }
 
     pango_font_description_free(nd); pango_font_description_free(td);
     g_object_unref(nl); g_object_unref(tl);
@@ -337,8 +354,20 @@ void Renderer::renderQuote(
         g_object_unref(tl); pango_font_description_free(td);
     }
 
-    double canvasW = kCanvasPad + kAvatarSize + kAvatarMarginRight + kMsgMaxWidth + kTailWidth + kCanvasPad;
-    double canvasH = kCanvasPad + std::max(totalH, kAvatarSize) + kCanvasPad;
+    
+    double maxNeededW = 0;
+    for (size_t i = 0; i < messages.size(); ++i) {
+        double w = sizes[i].bubbleW;
+        if (!messages[i].isOutgoing) w += Style::kAvatarSize + Style::kAvatarMarginRight;
+        if (!sizes[i].isSticker) w += Style::kTailWidth;
+        maxNeededW = std::max(maxNeededW, w);
+    }
+    double contentW = maxNeededW;
+    double canvasW = Style::kCanvasPad + contentW + Style::kCanvasPad;
+    
+    if (!messages.empty()) totalH -= 12; // remove last gap for equal padding
+    double canvasH = Style::kCanvasPad + std::max(totalH, (double)Style::kAvatarSize) + Style::kCanvasPad;
+
     cairo_destroy(measure_cr); cairo_surface_destroy(measure_surf);
 
     cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, (int)ceil(canvasW), (int)ceil(canvasH));
@@ -403,7 +432,7 @@ void Renderer::renderQuote(
         }
 
         double bubbleX = msg.isOutgoing 
-            ? (kCanvasPad + kAvatarSize + kAvatarMarginRight + (kMsgMaxWidth - sz.bubbleW))
+            ? (kCanvasPad + contentW - sz.bubbleW - (sz.isSticker ? 0 : kTailWidth))
             : (kCanvasPad + kAvatarSize + kAvatarMarginRight);
 
         if (showBubble) {
@@ -446,7 +475,7 @@ void Renderer::renderQuote(
 
         // ── Reply Block ──────────────────────────────────────────────────
         if (msg.reply.hasReply) {
-            drawReply(cr, bubbleX + kPadLeft, py, sz.bubbleW - kPadLeft - kPadRight, msg.reply);
+            drawReply(cr, bubbleX + kPadLeft, py, sz.bubbleW - kPadLeft - kPadRight, msg.reply, emojiMap);
             py += sz.replyH;
         }
 

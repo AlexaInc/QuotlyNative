@@ -88,7 +88,8 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
         std::string filePath = fj["result"].value("file_path", "");
         if (filePath.empty()) return "";
 
-        std::string out = "/tmp/emoji_" + emojiId + "_botapi" + extFromPath(filePath);
+        mkdir("emoji_cache", 0777);
+        std::string out = std::string("emoji_cache") + "/emoji_" + emojiId + "_botapi" + extFromPath(filePath);
         if (fileExists(out)) return out;
         std::string downloadUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
         int rc = system(("curl -L -sS --max-time 30 -o " + shellQuote(out) + " " + shellQuote(downloadUrl)).c_str());
@@ -214,8 +215,15 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
     try { eid = std::stoull(emojiId); }
     catch (...) { apiLog("[TgClient] Invalid emoji id: " + emojiId); return ""; }
 
-    std::string cachedPng = "/tmp/emoji_" + emojiId + ".png";
-    if (fileExists(cachedPng)) return cachedPng;
+    
+    std::string cacheDir = "emoji_cache";
+    mkdir(cacheDir.c_str(), 0777);
+    
+    for (const char* ext : {".png", ".webp.png", ".jpg.png", ".tgs.png", ".webm.png", ".cached.png", ".webp", ".jpg", ".tgs", ".webm", ".cached"}) {
+        std::string p = cacheDir + "/emoji_" + emojiId + ext;
+        if (fileExists(p)) return p;
+    }
+
 
     std::cout << "[TgClient] Fetching doc for emoji: " << eid << std::endl;
 
@@ -269,7 +277,7 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
     // cannot draw TGS/WEBM directly, while thumbnails are small WEBP/JPEG/PNG.
     std::string thumbSize = thumb.bestType;
     if (!thumb.cachedBytes.empty()) {
-        std::string cached = saveBytes("/tmp/emoji_" + emojiId + "_cached", thumb.cachedBytes);
+        std::string cached = saveBytes(cacheDir + "/emoji_" + emojiId + "_cached", thumb.cachedBytes);
         if (!cached.empty()) {
             apiLog("[TgClient] Using cached thumb bytes: " + cached);
             return cached;
@@ -302,7 +310,7 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
         fr.readInt32(); // mtime
         MTProto::Bytes b = fr.readBytes();
         apiLog("[TgClient] Downloaded " + std::to_string(b.size()) + " bytes" + (requestedThumb.empty() ? "" : " thumb=" + requestedThumb));
-        return saveBytes("/tmp/emoji_" + emojiId + (requestedThumb.empty() ? "" : "_thumb_" + requestedThumb), b, requestedThumb.empty() ? mime : "");
+        return saveBytes(cacheDir + "/emoji_" + emojiId + (requestedThumb.empty() ? "" : "_thumb_" + requestedThumb), b, requestedThumb.empty() ? mime : "");
     };
 
     std::string path;

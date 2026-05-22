@@ -25,8 +25,15 @@ struct BubbleRounding {
     CornerRounding bottomRight = CornerRounding::Large;
 };
 
+struct CustomEmoji {
+    int offset;
+    int length;
+    uint64_t documentId;
+};
 struct ReplyData {
     std::string text;
+    std::string pangoMarkup;
+    std::vector<CustomEmoji> customEmojis;
     std::string senderName;
     int senderId = 0;
     bool hasReply = false;
@@ -34,11 +41,6 @@ struct ReplyData {
 
 enum class MediaType { None, Photo, Sticker };
 
-struct CustomEmoji {
-    int offset;
-    int length;
-    uint64_t documentId;
-};
 
 struct MessageData {
     std::string text;                  // raw text
@@ -81,7 +83,7 @@ private:
                             int userId);
 
     static void drawReply(cairo_t* cr, double x, double y,
-                           double width, const ReplyData& reply);
+                           double width, const ReplyData& reply, const std::map<uint64_t, std::string>& emojiMap);
 
     static void measureLayout(PangoLayout* layout, int maxWidth,
                                int& outWidth, int& outHeight);
