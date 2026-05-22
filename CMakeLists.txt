@@ -10,6 +10,7 @@ pkg_check_modules(PANGO REQUIRED pango pangocairo)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
 
 # Include directories
 include_directories(
@@ -43,4 +44,5 @@ target_link_libraries(QuoteAPI
     OpenSSL::SSL
     OpenSSL::Crypto
     Boost::system
+    ZLIB::ZLIB
 )
