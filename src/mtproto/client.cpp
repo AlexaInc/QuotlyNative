@@ -28,6 +28,33 @@ static Bytes build_import_bot_auth(const std::string& bot_token) {
     return w.data();
 }
 
+
+// ── TL: invokeWithLayer + initConnection ─────────────────────────────────────
+static Bytes wrap_init_connection(const Bytes& query) {
+    const char* api_id_env = std::getenv("TG_API_ID");
+    int32_t api_id = api_id_env ? std::stoi(api_id_env) : 0;
+
+    TLWriter init;
+    init.writeInt32((int32_t)0xc1cd5ea9u); // initConnection
+    init.writeInt32(0);                    // flags
+    init.writeInt32(api_id);
+    init.writeString("QuotlyNative");      // device_model
+    init.writeString("Linux");             // system_version
+    init.writeString("1.0");               // app_version
+    init.writeString("en");                // system_lang_code
+    init.writeString("");                  // lang_pack
+    init.writeString("en");                // lang_code
+    Bytes initData = init.data();
+    initData.insert(initData.end(), query.begin(), query.end());
+
+    TLWriter layer;
+    layer.writeInt32((int32_t)0xda9b0d0du); // invokeWithLayer
+    layer.writeInt32(214);                  // current public API layer
+    Bytes out = layer.data();
+    out.insert(out.end(), initData.begin(), initData.end());
+    return out;
+}
+
 // ── TL: ping_delay_disconnect ─────────────────────────────────────────────────
 static Bytes build_ping_delay(int64_t ping_id, int32_t disconnect_delay = 75) {
     TLWriter w;
@@ -74,25 +101,60 @@ bool Client::do_connect() {
             // Authenticate as bot
             std::cout << "  [MTProto] Authenticating bot..." << std::endl;
             Bytes auth_req = build_import_bot_auth(m_bot_token);
-            int64_t msg_id = m_session->send(auth_req);
+            int64_t msg_id = m_session->send(wrap_init_connection(auth_req));
 
-            // Wait for auth response
-            Bytes resp = m_session->recv();
-            if (resp.empty()) throw std::runtime_error("Empty auth response");
-
-            // Check for rpc_error in response
-            TLReader r(resp);
-            int32_t cid = r.readInt32();
-            if (cid == TL::rpc_result) {
-                r.readInt64(); // req_msg_id
-                int32_t inner_cid = r.readInt32();
-                if (inner_cid == TL::rpc_error) {
-                    int32_t err_code = r.readInt32();
-                    std::string err_msg = r.readString();
-                    throw std::runtime_error("Bot auth error " +
-                        std::to_string(err_code) + ": " + err_msg);
+            // Wait specifically for the auth.importBotAuthorization rpc_result.
+            // Telegram may send new_session_created or containers before the RPC result;
+            // treating those as successful auth leaves the key unauthorised and later
+            // API calls fail with CONNECTION_NOT_INITED/AUTH_KEY_UNREGISTERED.
+            bool auth_ok = false;
+            auto inspect_auth_payload = [&](const Bytes& payload, auto&& self) -> bool {
+                if (payload.size() < 4) return false;
+                TLReader r(payload);
+                int32_t cid = r.readInt32();
+                if (cid == TL::rpc_result) {
+                    int64_t req = r.readInt64();
+                    if (req != msg_id) return false;
+                    int32_t inner_cid = r.readInt32();
+                    if (inner_cid == TL::rpc_error) {
+                        int32_t err_code = r.readInt32();
+                        std::string err_msg = r.readString();
+                        throw std::runtime_error("Bot auth error " + std::to_string(err_code) + ": " + err_msg);
+                    }
+                    return true;
                 }
+                if (cid == TL::new_session_created) {
+                    int64_t first_msg = r.readInt64();
+                    r.readInt64();
+                    int64_t server_salt = r.readInt64();
+                    if (m_session) m_session->set_server_salt(server_salt);
+                    try { m_session->send(Session::make_ack(first_msg), false); } catch (...) {}
+                    return false;
+                }
+                if (cid == TL::bad_server_salt) {
+                    r.readInt64(); r.readInt32(); r.readInt32();
+                    int64_t new_salt = r.readInt64();
+                    if (m_session) m_session->set_server_salt(new_salt);
+                    return false;
+                }
+                if (cid == TL::msg_container) {
+                    int32_t n = r.readInt32();
+                    for (int i = 0; i < n; ++i) {
+                        r.readInt64(); r.readInt32();
+                        int32_t bytes = r.readInt32();
+                        Bytes inner = r.readRaw(bytes);
+                        if (self(inner, self)) return true;
+                    }
+                }
+                return false;
+            };
+
+            for (int i = 0; i < 10 && !auth_ok; ++i) {
+                Bytes resp = m_session->recv();
+                if (resp.empty()) throw std::runtime_error("Empty auth response");
+                auth_ok = inspect_auth_payload(resp, inspect_auth_payload);
             }
+            if (!auth_ok) throw std::runtime_error("Timed out waiting for bot auth result");
 
             m_connected  = true;
             m_backoff_s  = 1; // reset on success
@@ -217,7 +279,8 @@ RpcResult Client::invoke(const Bytes& request, int timeout_ms) {
 
     {
         std::lock_guard<std::mutex> lk(m_pending_mutex);
-        msg_id = m_session->send(request);
+        Bytes wrapped = wrap_init_connection(request);
+        msg_id = m_session->send(wrapped);
         m_pending[msg_id] = std::move(promise);
     }
 
