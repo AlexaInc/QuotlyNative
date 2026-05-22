@@ -12,6 +12,7 @@
 #include <fstream>
 #include <vector>
 #include <cstdlib>
+#include <cstdint>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -44,6 +45,50 @@ static std::string base64Decode(const std::string& in) {
         }
     }
     return out;
+}
+
+
+static uint64_t parseUInt64Json(const nlohmann::json& obj, const std::string& key, uint64_t fallback = 0) {
+    if (!obj.contains(key) || obj[key].is_null()) return fallback;
+    const auto& v = obj[key];
+    try {
+        if (v.is_number_unsigned()) return v.get<uint64_t>();
+        if (v.is_number_integer()) {
+            auto n = v.get<int64_t>();
+            return n > 0 ? static_cast<uint64_t>(n) : fallback;
+        }
+        if (v.is_string()) {
+            std::string str = v.get<std::string>();
+            if (str.empty()) return fallback;
+            return static_cast<uint64_t>(std::stoull(str));
+        }
+    } catch (...) {}
+    return fallback;
+}
+
+// Telegram entity offsets are UTF-16 code units; Pango wants UTF-8 byte indices.
+static int utf16OffsetToUtf8ByteOffset(const std::string& text, int utf16Offset) {
+    if (utf16Offset <= 0) return 0;
+    int units = 0;
+    size_t i = 0;
+    while (i < text.size() && units < utf16Offset) {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+        uint32_t cp = 0;
+        size_t len = 1;
+        if ((c & 0x80) == 0) { cp = c; len = 1; }
+        else if ((c & 0xE0) == 0xC0 && i + 1 < text.size()) {
+            cp = ((c & 0x1F) << 6) | (static_cast<unsigned char>(text[i+1]) & 0x3F); len = 2;
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < text.size()) {
+            cp = ((c & 0x0F) << 12) | ((static_cast<unsigned char>(text[i+1]) & 0x3F) << 6) | (static_cast<unsigned char>(text[i+2]) & 0x3F); len = 3;
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < text.size()) {
+            cp = ((c & 0x07) << 18) | ((static_cast<unsigned char>(text[i+1]) & 0x3F) << 12) | ((static_cast<unsigned char>(text[i+2]) & 0x3F) << 6) | (static_cast<unsigned char>(text[i+3]) & 0x3F); len = 4;
+        } else { cp = c; len = 1; }
+        int cpUnits = (cp >= 0x10000) ? 2 : 1;
+        if (units + cpUnits > utf16Offset) break;
+        units += cpUnits;
+        i += len;
+    }
+    return static_cast<int>(i);
 }
 
 static std::string saveBase64ToTemp(const std::string& b64Data, const std::string& prefix) {
@@ -122,8 +167,8 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
             msg.pangoMarkup = TextEngine::processEntities(msg.text, entities);
 
             // ── Field Aliasing: reply_to / replySender ──────────────────────
-            if (item.contains("reply_to")) {
-                const auto& r = item["reply_to"];
+            if (item.contains("reply_to") || item.contains("reply_to_message")) {
+                const auto& r = item.contains("reply_to") ? item["reply_to"] : item["reply_to_message"];
                 msg.reply.hasReply = true;
                 msg.reply.text = r.value("text", "");
                 if (r.contains("from")) {
@@ -149,18 +194,24 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
             }
 
             // ── Premium Emojis & Status ─────────────────────────────────────
-            msg.emojiStatusId = item.value("custom_emoji_id", item.value("customemojiid", 0ULL));
-            if (item.contains("from") && item["from"].contains("emoji_status_custom_emoji_id")) {
-                msg.emojiStatusId = item["from"]["emoji_status_custom_emoji_id"];
+            msg.emojiStatusId = parseUInt64Json(item, "custom_emoji_id",
+                                parseUInt64Json(item, "customemojiid",
+                                parseUInt64Json(item, "emoji_status_custom_emoji_id", 0)));
+            if (item.contains("from") && item["from"].is_object()) {
+                msg.emojiStatusId = parseUInt64Json(item["from"], "emoji_status_custom_emoji_id", msg.emojiStatusId);
             }
 
-            for (const auto& e : entities) {
-                if (e.value("type", "") == "custom_emoji") {
-                    CustomEmoji ce;
-                    ce.offset = e.value("offset", 0);
-                    ce.length = e.value("length", 0);
-                    ce.documentId = e.value("custom_emoji_id", 0ULL);
-                    msg.customEmojis.push_back(ce);
+            if (entities.is_array()) {
+                for (const auto& e : entities) {
+                    if (e.value("type", "") == "custom_emoji") {
+                        CustomEmoji ce;
+                        int off16 = e.value("offset", 0);
+                        int len16 = e.value("length", 0);
+                        ce.offset = utf16OffsetToUtf8ByteOffset(msg.text, off16);
+                        ce.length = utf16OffsetToUtf8ByteOffset(msg.text, off16 + len16) - ce.offset;
+                        ce.documentId = parseUInt64Json(e, "custom_emoji_id", parseUInt64Json(e, "document_id", 0));
+                        if (ce.documentId != 0) msg.customEmojis.push_back(ce);
+                    }
                 }
             }
 
@@ -176,7 +227,10 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
         );
         static bool s_tgConnected = [&](){
             const char* tok = std::getenv("BOT_TOKEN");
-            return tok ? s_tgClient.authenticate(tok) : false;
+            if (!tok || !*tok) return false;
+            bool mtprotoOk = s_tgClient.authenticate(tok);
+            if (!mtprotoOk) apiLog("[QuoteAPI] MTProto auth failed; Bot API emoji fallback enabled.");
+            return true;
         }();
 
         if (s_tgConnected) {

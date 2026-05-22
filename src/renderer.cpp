@@ -181,13 +181,25 @@ void Renderer::drawBubble(cairo_t* cr, double x, double y, double width, double 
 static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const std::string& path) {
     if (path.empty()) return;
     std::string finalPath = path;
-    // If downloaded as WebP, convert to PNG first using dwebp (installed in Docker)
-    if (path.size() > 5 && (path.substr(path.size()-5) == ".webp" || path.substr(path.size()-4) == ".tgs")) {
+    auto endsWith = [](const std::string& s, const std::string& suffix) {
+        return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
+    };
+
+    // Cairo loads PNG only. Telegram custom emojis are usually WEBP/TGS/WEBM
+    // documents, so convert non-PNG assets or downloaded thumbnails to PNG.
+    if (!endsWith(path, ".png")) {
         std::string pngPath = path + ".png";
         struct stat st; bool exists = (stat(pngPath.c_str(), &st) == 0);
         if (!exists) {
-            std::string cmd = "dwebp \"" + path + "\" -o \"" + pngPath + "\" >/dev/null 2>&1";
-            system(cmd.c_str());
+            std::string cmd;
+            if (endsWith(path, ".webp")) {
+                cmd = "dwebp \"" + path + "\" -o \"" + pngPath + "\" >/dev/null 2>&1";
+            } else if (endsWith(path, ".jpg") || endsWith(path, ".jpeg")) {
+                cmd = "(magick \"" + path + "\" \"" + pngPath + "\" || convert \"" + path + "\" \"" + pngPath + "\") >/dev/null 2>&1";
+            } else if (endsWith(path, ".webm") || endsWith(path, ".mp4") || endsWith(path, ".tgs")) {
+                cmd = "ffmpeg -y -i \"" + path + "\" -frames:v 1 \"" + pngPath + "\" >/dev/null 2>&1";
+            }
+            if (!cmd.empty()) system(cmd.c_str());
             exists = (stat(pngPath.c_str(), &st) == 0);
         }
         if (exists) finalPath = pngPath;
@@ -491,32 +503,23 @@ void Renderer::renderQuote(
 
             // ── Inline Emojis ─────────────────────────────────────────────
             if (!msg.customEmojis.empty()) {
-                PangoLayoutIter* iter = pango_layout_get_iter(tl);
-                size_t emojiIdx = 0;
-                do {
-                    PangoLayoutRun* run = pango_layout_iter_get_run(iter);
-                    if (!run) continue;
-                    PangoFontDescription* rd = pango_font_describe(run->item->analysis.font);
-                    int sz = pango_font_description_get_size(rd);
-                    // 1230 Pango units = 1.23 points
-                    if (sz == 1230 && emojiIdx < msg.customEmojis.size()) {
-                        uint64_t eid = msg.customEmojis[emojiIdx].documentId;
-                        std::cout << "[Renderer] Found size sentinel (1.23pt) for id: " << eid << std::endl;
-                        if (emojiMap.count(eid)) {
-                            PangoRectangle rect;
-                            pango_layout_iter_get_run_extents(iter, NULL, &rect);
-                            double ex = bubbleX + kPadLeft + PANGO_PIXELS(rect.x);
-                            double ey = py + PANGO_PIXELS(rect.y) + (PANGO_PIXELS(rect.height) - 22)/2.0;
-                            std::cout << "[Renderer] Drawing surface at " << ex << ", " << ey << std::endl;
-                            drawEmojiSurface(cr, ex, ey, 22, emojiMap.at(eid));
-                        } else {
-                            std::cout << "[Renderer] Asset NOT in emojiMap: " << eid << std::endl;
-                        }
-                        emojiIdx++;
+                for (const auto& ce : msg.customEmojis) {
+                    uint64_t eid = ce.documentId;
+                    if (!emojiMap.count(eid)) {
+                        std::cout << "[Renderer] Asset NOT in emojiMap: " << eid << std::endl;
+                        continue;
                     }
-                    pango_font_description_free(rd);
-                } while (pango_layout_iter_next_run(iter));
-                pango_layout_iter_free(iter);
+
+                    PangoRectangle pos;
+                    int byteIndex = std::clamp(ce.offset, 0, (int)msg.text.size());
+                    pango_layout_index_to_pos(tl, byteIndex, &pos);
+                    double emojiSize = 22;
+                    double ex = bubbleX + kPadLeft + PANGO_PIXELS(pos.x);
+                    double lineH = std::max(emojiSize, (double)PANGO_PIXELS(pos.height));
+                    double ey = py + PANGO_PIXELS(pos.y) + (lineH - emojiSize) / 2.0;
+                    std::cout << "[Renderer] Drawing inline emoji " << eid << " at " << ex << ", " << ey << std::endl;
+                    drawEmojiSurface(cr, ex, ey, emojiSize, emojiMap.at(eid));
+                }
             }
 
             g_object_unref(tl); pango_font_description_free(td);

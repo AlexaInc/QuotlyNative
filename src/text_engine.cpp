@@ -3,6 +3,7 @@
 
 #include "text_engine.h"
 #include <algorithm>
+#include <cstdint>
 
 namespace Quote {
 
@@ -15,7 +16,7 @@ static std::string xmlEscape(const std::string& s) {
             case '&':  out += "&amp;";  break;
             case '<':  out += "&lt;";   break;
             case '>':  out += "&gt;";   break;
-            case '"':  out += "&quot;"; break;
+            case '"': out += "&quot;"; break;
             case '\'': out += "&apos;"; break;
             default:   out += c;        break;
         }
@@ -23,22 +24,63 @@ static std::string xmlEscape(const std::string& s) {
     return out;
 }
 
+// Telegram message entity offsets are UTF-16 code units, while std::string and
+// Pango layout indices are UTF-8 byte offsets. Convert and clamp safely.
+static int utf16OffsetToUtf8ByteOffset(const std::string& text, int utf16Offset) {
+    if (utf16Offset <= 0) return 0;
+
+    int units = 0;
+    size_t i = 0;
+    while (i < text.size() && units < utf16Offset) {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+        uint32_t cp = 0;
+        size_t len = 1;
+
+        if ((c & 0x80) == 0) {
+            cp = c; len = 1;
+        } else if ((c & 0xE0) == 0xC0 && i + 1 < text.size()) {
+            cp = ((c & 0x1F) << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3F);
+            len = 2;
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < text.size()) {
+            cp = ((c & 0x0F) << 12) |
+                 ((static_cast<unsigned char>(text[i + 1]) & 0x3F) << 6) |
+                 (static_cast<unsigned char>(text[i + 2]) & 0x3F);
+            len = 3;
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < text.size()) {
+            cp = ((c & 0x07) << 18) |
+                 ((static_cast<unsigned char>(text[i + 1]) & 0x3F) << 12) |
+                 ((static_cast<unsigned char>(text[i + 2]) & 0x3F) << 6) |
+                 (static_cast<unsigned char>(text[i + 3]) & 0x3F);
+            len = 4;
+        } else {
+            cp = c; len = 1;
+        }
+
+        int cpUnits = (cp >= 0x10000) ? 2 : 1;
+        if (units + cpUnits > utf16Offset) break; // offset inside surrogate pair
+        units += cpUnits;
+        i += len;
+    }
+    return static_cast<int>(i);
+}
+
 std::string TextEngine::processEntities(const std::string& text,
                                          const nlohmann::json& entities) {
-    struct Tag { int pos; std::string markup; };
+    struct Tag { int pos; int priority; std::string markup; };
     std::vector<Tag> tags;
 
-    if (!entities.empty()) {
-        auto sorted = entities.get<std::vector<nlohmann::json>>();
-        std::sort(sorted.begin(), sorted.end(), [](const nlohmann::json& a, const nlohmann::json& b){
-            return a["offset"].get<int>() < b["offset"].get<int>();
-        });
-
-        for (const auto& e : sorted) {
-            int off = e.value("offset", 0);
-            int len = e.value("length", 0);
-            if (len <= 0) continue;
+    if (entities.is_array() && !entities.empty()) {
+        for (const auto& e : entities) {
+            int off16 = e.value("offset", 0);
+            int len16 = e.value("length", 0);
+            if (len16 <= 0) continue;
             std::string type = e.value("type", "");
+
+            int off = utf16OffsetToUtf8ByteOffset(text, off16);
+            int end = utf16OffsetToUtf8ByteOffset(text, off16 + len16);
+            off = std::clamp(off, 0, (int)text.size());
+            end = std::clamp(end, off, (int)text.size());
+            if (end <= off) continue;
 
             std::string open, close;
             if      (type == "bold")          { open = "<b>";          close = "</b>"; }
@@ -53,20 +95,23 @@ std::string TextEngine::processEntities(const std::string& text,
                 close = "</span>";
             }
             else if (type == "custom_emoji") {
-                uint64_t eid = e.value("custom_emoji_id", 0ULL);
-                // Use a very unique size (1.23pt) and alpha='0' as a sentinel
-                open = "<span size='1230' alpha='0' foreground='#00000000'>"; 
+                // Hide the one-character placeholder supplied by Telegram. The
+                // renderer overlays the downloaded custom-emoji image at this
+                // exact Pango index using MessageData::customEmojis.
+                open = "<span alpha='1' foreground='#FFFFFF'>";
                 close = "</span>";
             }
             else { continue; }
 
-            tags.push_back({off,       open});
-            tags.push_back({off + len, close});
+            // Close tags before opening tags at the same byte to keep markup valid.
+            tags.push_back({off, 1, open});
+            tags.push_back({end, 0, close});
         }
     }
 
     std::stable_sort(tags.begin(), tags.end(), [](const Tag& a, const Tag& b){
-        return a.pos < b.pos;
+        if (a.pos != b.pos) return a.pos < b.pos;
+        return a.priority < b.priority;
     });
 
     std::string result;
@@ -78,6 +123,7 @@ std::string TextEngine::processEntities(const std::string& text,
             result += tags[tagIdx++].markup;
         if (cursor >= (int)text.size()) break;
         int nextTagPos = tagIdx < tags.size() ? tags[tagIdx].pos : (int)text.size();
+        nextTagPos = std::clamp(nextTagPos, cursor, (int)text.size());
         result += xmlEscape(text.substr(cursor, nextTagPos - cursor));
         cursor = nextTagPos;
     }
