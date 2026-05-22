@@ -309,7 +309,8 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
                 drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
             }
             double sh = sz.photoH;
-            double sw = (sh * isz.w / isz.h);
+            ImageSize isz = getImageSize(msg.photoPath);
+            double sw = (isz.h > 0) ? (sh * isz.w / (double)isz.h) : sh;
             const_cast<double&>(sz.bubbleW) = sw; // update measured width
             double sx = bubbleX;
             double sy = curY + 4;
