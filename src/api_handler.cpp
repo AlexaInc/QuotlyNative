@@ -4,10 +4,15 @@
 #include "api_handler.h"
 #include "renderer.h"
 #include "text_engine.h"
-#include <filesystem>
+#include <nlohmann/json.hpp>
 #include <iostream>
+#include <filesystem>
+#include <map>
 #include <fstream>
 #include <vector>
+
+using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace Quote {
 
@@ -147,11 +152,26 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
             msgs.push_back(msg);
         }
 
+        // ── Pre-fetch Premium Emojis ─────────────────────────────────────────
+        std::map<uint64_t, std::string> emojiMap;
+        for (const auto& m : msgs) {
+            if (m.emojiStatusId != 0 && emojiMap.find(m.emojiStatusId) == emojiMap.end()) {
+                std::string path = m_tgClient.fetchCustomEmoji(std::to_string(m.emojiStatusId));
+                if (!path.empty()) emojiMap[m.emojiStatusId] = path;
+            }
+            for (const auto& ce : m.customEmojis) {
+                if (emojiMap.find(ce.documentId) == emojiMap.end()) {
+                    std::string path = m_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
+                    if (!path.empty()) emojiMap[ce.documentId] = path;
+                }
+            }
+        }
+
         RenderOptions options;
         options.transparent = transparent;
         options.hasBubble = true;
 
-        Renderer::renderQuote(outputPath, msgs, options);
+        Renderer::renderQuote(outputPath, msgs, options, emojiMap);
 
         std::ifstream file(outputPath, std::ios::binary);
         if (!file) return crow::response(500, "Failed to read generated quote");

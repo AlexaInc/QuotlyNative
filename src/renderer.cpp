@@ -6,6 +6,8 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <map>
+#include <sys/stat.h>
 
 namespace Quote {
 
@@ -174,9 +176,46 @@ void Renderer::drawBubble(cairo_t* cr, double x, double y, double width, double 
     cairo_fill(cr);
 }
 
+// ── drawEmojiSurface ─────────────────────────────────────────────────────────
+
+static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const std::string& path) {
+    if (path.empty()) return;
+    std::string finalPath = path;
+    // If downloaded as WebP, convert to PNG first using dwebp (installed in Docker)
+    if (path.size() > 5 && (path.substr(path.size()-5) == ".webp" || path.substr(path.size()-4) == ".tgs")) {
+        std::string pngPath = path + ".png";
+        struct stat st; bool exists = (stat(pngPath.c_str(), &st) == 0);
+        if (!exists) {
+            std::string cmd = "dwebp \"" + path + "\" -o \"" + pngPath + "\" >/dev/null 2>&1";
+            system(cmd.c_str());
+            exists = (stat(pngPath.c_str(), &st) == 0);
+        }
+        if (exists) finalPath = pngPath;
+    }
+    cairo_surface_t* img = cairo_image_surface_create_from_png(finalPath.c_str());
+    if (cairo_surface_status(img) == CAIRO_STATUS_SUCCESS) {
+        double iw = cairo_image_surface_get_width(img);
+        double ih = cairo_image_surface_get_height(img);
+        if (iw > 0 && ih > 0) {
+            cairo_save(cr);
+            cairo_translate(cr, x, y);
+            cairo_scale(cr, size / iw, size / ih);
+            cairo_set_source_surface(cr, img, 0, 0);
+            cairo_paint(cr);
+            cairo_restore(cr);
+        }
+    }
+    cairo_surface_destroy(img);
+}
+
 // ── renderQuote ───────────────────────────────────────────────────────────────
 
-void Renderer::renderQuote(const std::string& outputFile, const std::vector<MessageData>& messages, const RenderOptions& options) {
+void Renderer::renderQuote(
+    const std::string& outputFile,
+    const std::vector<MessageData>& messages,
+    const RenderOptions& options,
+    const std::map<uint64_t, std::string>& emojiMap)
+{
     if (messages.empty()) return;
     using namespace Style;
 
@@ -373,89 +412,107 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
 
         double py = curY + kPadTop;
         if (showName) {
-             auto color = hexToRGBA(nameColor(msg.senderId));
-             cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
-             PangoLayout* nl = pango_cairo_create_layout(cr);
-             PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 13");
-             pango_layout_set_font_description(nl, nd);
-             pango_layout_set_text(nl, msg.senderName.c_str(), -1);
-             cairo_move_to(cr, bubbleX + kPadLeft, py + kNamePadTop);
-             pango_cairo_show_layout(cr, nl);
-             
-             // ── Emoji Status ─────────────────────────────────────────────
-             if (msg.emojiStatusId != 0) {
-                 int nw, nh; pango_layout_get_pixel_size(nl, &nw, &nh);
-                 double ex = bubbleX + kPadLeft + nw + 6;
-                 double ey = py + kNamePadTop + (nh - 14)/2.0;
-                 // Draw small star icon
-                 cairo_set_source_rgba(cr, 1, 0.8, 0, 1); // Yellow
-                 cairo_save(cr);
-                 cairo_translate(cr, ex + 7, ey + 7);
-                 for (int k=0; k<5; ++k) {
-                     cairo_line_to(cr, 7 * cos(k*2*M_PI/5 - M_PI/2), 7 * sin(k*2*M_PI/5 - M_PI/2));
-                     cairo_line_to(cr, 3 * cos(k*2*M_PI/5 + M_PI/5 - M_PI/2), 3 * sin(k*2*M_PI/5 + M_PI/5 - M_PI/2));
-                 }
-                 cairo_close_path(cr);
-                 cairo_fill(cr);
-                 cairo_restore(cr);
-             }
+            auto color = hexToRGBA(nameColor(msg.senderId));
+            cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+            PangoLayout* nl = pango_cairo_create_layout(cr);
+            PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 13");
+            pango_layout_set_font_description(nl, nd);
+            pango_layout_set_text(nl, msg.senderName.c_str(), -1);
+            cairo_move_to(cr, bubbleX + kPadLeft, py + kNamePadTop);
+            pango_cairo_show_layout(cr, nl);
 
-             py += sz.nameH; g_object_unref(nl); pango_font_description_free(nd);
+            // ── Emoji Status ─────────────────────────────────────────────
+            if (msg.emojiStatusId != 0 && emojiMap.count(msg.emojiStatusId)) {
+                int nw, nh; pango_layout_get_pixel_size(nl, &nw, &nh);
+                drawEmojiSurface(cr, bubbleX + kPadLeft + nw + 4,
+                                 py + kNamePadTop + (nh - 20)/2.0,
+                                 20, emojiMap.at(msg.emojiStatusId));
+            }
+            py += sz.nameH; g_object_unref(nl); pango_font_description_free(nd);
         }
 
+        // ── Reply Block ──────────────────────────────────────────────────
         if (msg.reply.hasReply) {
-             // ...
             drawReply(cr, bubbleX + kPadLeft, py, sz.bubbleW - kPadLeft - kPadRight, msg.reply);
             py += sz.replyH;
         }
 
-        // ── PHOTO inside bubble with thin rounded border ─────────────────
+        // ── PHOTO inside bubble with thin rounded border ──────────────────
         if (msg.mediaType == MediaType::Photo && !msg.photoPath.empty()) {
             bool barePhotoRender = !hasText;
             double ph = sz.photoH;
-            double ratio = 1.0;
             ImageSize isz = getImageSize(msg.photoPath);
-            if (isz.w > 0 && isz.h > 0) ratio = (double)isz.w / isz.h;
+            double ratio = (isz.w > 0 && isz.h > 0) ? (double)isz.w / isz.h : 1.0;
             double pw = ph * ratio;
 
-            double px = barePhotoRender ? bubbleX : bubbleX + (sz.bubbleW - kPadLeft - kPadRight - pw)/2 + kPadLeft;
-            if (!barePhotoRender) px = bubbleX + kPadLeft; // align left if in bubble
-            // Rounded rect with thin border
+            double px = barePhotoRender ? bubbleX : bubbleX + kPadLeft;
             cairo_new_path(cr);
             cairo_arc(cr, px + kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, M_PI, 3*M_PI/2);
             cairo_arc(cr, px + pw - kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, 3*M_PI/2, 2*M_PI);
             cairo_arc(cr, px + pw - kPhotoBorderR, py + ph - kPhotoBorderR, kPhotoBorderR, 0, M_PI/2);
             cairo_arc(cr, px + kPhotoBorderR, py + ph - kPhotoBorderR, kPhotoBorderR, M_PI/2, M_PI);
             cairo_close_path(cr);
-            cairo_set_source_rgba(cr, 0.15, 0.15, 0.18, 1);
-            cairo_fill_preserve(cr);
-            cairo_set_source_rgba(cr, 0.35, 0.35, 0.4, 0.6);
-            cairo_set_line_width(cr, kPhotoBorder);
-            cairo_stroke(cr);
-            // Photo placeholder icon
-            PangoLayout* pl = pango_cairo_create_layout(cr);
-            PangoFontDescription* pd = pango_font_description_from_string("Inter 28");
-            pango_layout_set_font_description(pl, pd);
-            pango_layout_set_text(pl, "\xF0\x9F\x96\xBC", -1);
-            int ptw, pth; pango_layout_get_pixel_size(pl, &ptw, &pth);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.4);
-            cairo_move_to(cr, px + (pw - ptw)/2, py + (ph - pth)/2);
-            pango_cairo_show_layout(cr, pl);
-            g_object_unref(pl); pango_font_description_free(pd);
-            py += sz.photoH;
+
+            // Draw actual image if available
+            cairo_surface_t* image = cairo_image_surface_create_from_png(msg.photoPath.c_str());
+            if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
+                cairo_save(cr); cairo_clip(cr);
+                cairo_translate(cr, px, py);
+                cairo_scale(cr, pw / cairo_image_surface_get_width(image),
+                                ph / cairo_image_surface_get_height(image));
+                cairo_set_source_surface(cr, image, 0, 0);
+                cairo_paint(cr);
+                cairo_restore(cr);
+            } else {
+                cairo_set_source_rgba(cr, 0.15, 0.15, 0.18, 1);
+                cairo_fill_preserve(cr);
+                cairo_set_source_rgba(cr, 0.35, 0.35, 0.4, 0.6);
+                cairo_set_line_width(cr, kPhotoBorder);
+                cairo_stroke(cr);
+            }
+            cairo_surface_destroy(image);
+            py += sz.photoH + (barePhotoRender ? 0 : 8);
         }
 
-        // ── Text ─────────────────────────────────────────────────────────
+        // ── Text with Inline Emojis ───────────────────────────────────────
         if (hasText) {
             PangoLayout* tl = pango_cairo_create_layout(cr);
             PangoFontDescription* td = pango_font_description_from_string("Inter 14");
             pango_layout_set_font_description(tl, td);
             pango_layout_set_width(tl, (sz.bubbleW - kPadLeft - kPadRight) * PANGO_SCALE);
+            pango_layout_set_wrap(tl, PANGO_WRAP_WORD_CHAR);
             if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
             else pango_layout_set_text(tl, msg.text.c_str(), -1);
+
             cairo_set_source_rgb(cr, 1, 1, 1);
             cairo_move_to(cr, bubbleX + kPadLeft, py);
             pango_cairo_show_layout(cr, tl);
+
+            // ── Inline Emojis ─────────────────────────────────────────────
+            if (!msg.customEmojis.empty()) {
+                PangoLayoutIter* iter = pango_layout_get_iter(tl);
+                size_t emojiIdx = 0;
+                do {
+                    PangoLayoutRun* run = pango_layout_iter_get_run(iter);
+                    if (!run) continue;
+                    PangoFontDescription* rd = pango_font_describe(run->item->analysis.font);
+                    const char* fam = pango_font_description_get_family(rd);
+                    if (fam && std::string(fam) == "EmojiPlaceholder" && emojiIdx < msg.customEmojis.size()) {
+                        uint64_t eid = msg.customEmojis[emojiIdx].documentId;
+                        if (emojiMap.count(eid)) {
+                            PangoRectangle rect;
+                            pango_layout_iter_get_run_extents(iter, NULL, &rect);
+                            double ex = bubbleX + kPadLeft + PANGO_PIXELS(rect.x);
+                            double ey = py + PANGO_PIXELS(rect.y) + (PANGO_PIXELS(rect.height) - 22)/2.0;
+                            drawEmojiSurface(cr, ex, ey, 22, emojiMap.at(eid));
+                        }
+                        emojiIdx++;
+                    }
+                    pango_font_description_free(rd);
+                } while (pango_layout_iter_next_run(iter));
+                pango_layout_iter_free(iter);
+            }
+
             g_object_unref(tl); pango_font_description_free(td);
         }
 

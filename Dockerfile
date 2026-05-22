@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y \
     libasio-dev \
     libboost-all-dev \
     zlib1g-dev \
+    libwebp-dev \
+    webp \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
@@ -180,6 +182,8 @@ RUN apt-get update && apt-get install -y \
     fonts-stix \
     fonts-lyx \
     fonts-texgyre \
+    libwebp7 \
+    webp \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 

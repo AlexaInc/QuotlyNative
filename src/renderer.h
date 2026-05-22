@@ -4,6 +4,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <map>
 #include <cairo.h>
 #include <pango/pangocairo.h>
 #include <nlohmann/json.hpp>
@@ -67,7 +68,8 @@ public:
     static void renderQuote(
         const std::string& outputFile,
         const std::vector<MessageData>& messages,
-        const RenderOptions& options);
+        const RenderOptions& options,
+        const std::map<uint64_t, std::string>& emojiMap = {});
 
 private:
     static void drawBubble(cairo_t* cr, double x, double y,

@@ -89,6 +89,10 @@ namespace TL {
     constexpr int32_t document                        = (int32_t)0x8fdccffau;
     constexpr int32_t upload_file                     = (int32_t)0x096a18d5u;
     constexpr int32_t photo                           = (int32_t)0xfb197a65u;
+    constexpr int32_t inputDocumentFileLocation      = (int32_t)0xbad07584u;
+    constexpr int32_t inputFileLocation               = (int32_t)0xdfda4f57u;
+    constexpr int32_t photoSize                       = (int32_t)0x77bfb61bu;
+    constexpr int32_t photoCachedSize                 = (int32_t)0xe9a73486u;
 } // namespace TL
 
 } // namespace MTProto
