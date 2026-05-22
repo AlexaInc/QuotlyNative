@@ -60,13 +60,19 @@ static int64_t make_msg_id() {
     return (sec << 32) | (frac & 0xfffffffc); // must be divisible by 4
 }
 
-// ── Build p_q_inner_data_dc TL object ─────────────────────────────────────────
+// ── Build p_q_inner_data TL object ──────────────────────────────────────────
+// NOTE: We use p_q_inner_data (0x83c95aec), NOT p_q_inner_data_dc (0xa9f55f95).
+// Pyrogram, Telethon, MadelineProto, gramjs and TDLib all use the plain form
+// for regular DC handshakes. The _dc variant is only for CDN/test/media DCs
+// where the dc field needs special encoding (+10000 for test, negative for media).
+// Production DCs accept the RSA blob with _dc but then silently produce a
+// server_DH_inner_data the client cannot decrypt (looks like a CID mismatch).
 static Bytes build_pq_inner(
     const Bytes& pq, uint32_t p, uint32_t q,
     const Bytes& nonce,          // 16 bytes
     const Bytes& server_nonce,   // 16 bytes
-    const Bytes& new_nonce,      // 32 bytes
-    int dc_id)
+    const Bytes& new_nonce       // 32 bytes
+)
 {
     auto u32_be = [](uint32_t v) -> Bytes {
         Bytes b(4);
@@ -78,14 +84,13 @@ static Bytes build_pq_inner(
     };
 
     TLWriter w;
-    w.writeInt32(TL::p_q_inner_data_dc);
+    w.writeInt32(TL::p_q_inner_data);
     w.writeBytes(pq);
     w.writeBytes(u32_be(p));
     w.writeBytes(u32_be(q));
     w.writeInt128(nonce.data());
     w.writeInt128(server_nonce.data());
     w.writeInt256(new_nonce.data());
-    w.writeInt32(dc_id);
     return w.data();
 }
 
@@ -185,7 +190,7 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
     // ── Step 2: req_DH_params (new_nonce is int256 = 32 bytes) ───────────────
     Bytes new_nonce = random_bytes(32);
 
-    Bytes inner          = build_pq_inner(pq, p, q, nonce, server_nonce, new_nonce, dc_id);
+    Bytes inner          = build_pq_inner(pq, p, q, nonce, server_nonce, new_nonce);
     Bytes encrypted_data = rsa_encrypt(inner, tg_rsa_n(), tg_rsa_e());  // MTProto 2.0 RSA_PAD
 
     auto u32_be = [](uint32_t v) -> Bytes {
@@ -244,11 +249,9 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
         throw std::runtime_error(ss.str());
     }
 
-    Bytes inner_part(decrypted.begin() + 20, decrypted.end());
-    Bytes expected_sha1 = sha1(inner_part);
-    if (!std::equal(expected_sha1.begin(), expected_sha1.end(), decrypted.begin()))
-        throw std::runtime_error("server_DH_inner_data SHA1 mismatch");
-
+    // Parse the TL fields first; the decrypted buffer also has trailing
+    // random padding, so we have to hash only the parsed range, not the
+    // whole tail. See Pyrogram auth.py — it does the same `.write()` trick.
     TLReader r_inner(decrypted, 20);
     r_inner.readInt32();          // cid (already checked)
     r_inner.readInt128();         // nonce
@@ -256,7 +259,14 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
     int32_t g       = r_inner.readInt32();
     Bytes   dh_prime = r_inner.readBytes();
     Bytes   g_a      = r_inner.readBytes();
-    // r_inner.readInt32();       // server_time (TODO: feed to transport for sync)
+    int32_t server_time = r_inner.readInt32();
+    (void)server_time;            // TODO: feed to Transport for clock-sync
+
+    size_t parsed_end = r_inner.pos();   // first byte past the TL data
+    Bytes inner_part(decrypted.begin() + 20, decrypted.begin() + parsed_end);
+    Bytes expected_sha1 = sha1(inner_part);
+    if (!std::equal(expected_sha1.begin(), expected_sha1.end(), decrypted.begin()))
+        throw std::runtime_error("server_DH_inner_data SHA1 mismatch");
 
     std::cout << "  [AuthKey] Step 3: DH params decrypted, g=" << g << std::endl;
 
