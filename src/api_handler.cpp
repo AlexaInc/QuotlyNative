@@ -4,12 +4,14 @@
 #include "api_handler.h"
 #include "renderer.h"
 #include "text_engine.h"
+#include "tg_client.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <filesystem>
 #include <map>
 #include <fstream>
 #include <vector>
+#include <cstdlib>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -154,15 +156,27 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
 
         // ── Pre-fetch Premium Emojis ─────────────────────────────────────────
         std::map<uint64_t, std::string> emojiMap;
-        for (const auto& m : msgs) {
-            if (m.emojiStatusId != 0 && emojiMap.find(m.emojiStatusId) == emojiMap.end()) {
-                std::string path = m_tgClient.fetchCustomEmoji(std::to_string(m.emojiStatusId));
-                if (!path.empty()) emojiMap[m.emojiStatusId] = path;
-            }
-            for (const auto& ce : m.customEmojis) {
-                if (emojiMap.find(ce.documentId) == emojiMap.end()) {
-                    std::string path = m_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
-                    if (!path.empty()) emojiMap[ce.documentId] = path;
+        // Static TgClient initialized from env vars (reused across requests)
+        static TgClient s_tgClient(
+            std::atoi(std::getenv("TG_API_ID") ? std::getenv("TG_API_ID") : "0"),
+            std::getenv("TG_API_HASH") ? std::getenv("TG_API_HASH") : ""
+        );
+        static bool s_tgConnected = [&](){
+            const char* tok = std::getenv("BOT_TOKEN");
+            return tok ? s_tgClient.authenticate(tok) : false;
+        }();
+
+        if (s_tgConnected) {
+            for (const auto& m : msgs) {
+                if (m.emojiStatusId != 0 && emojiMap.find(m.emojiStatusId) == emojiMap.end()) {
+                    std::string path = s_tgClient.fetchCustomEmoji(std::to_string(m.emojiStatusId));
+                    if (!path.empty()) emojiMap[m.emojiStatusId] = path;
+                }
+                for (const auto& ce : m.customEmojis) {
+                    if (emojiMap.find(ce.documentId) == emojiMap.end()) {
+                        std::string path = s_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
+                        if (!path.empty()) emojiMap[ce.documentId] = path;
+                    }
                 }
             }
         }
