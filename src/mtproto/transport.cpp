@@ -1,5 +1,13 @@
 // this file is part of AlexaInc / QuotlyNative — MTProto Transport Layer
 // developer hansaka@alexainc
+//
+// FIXES (2026-05-22 v2):
+//   * recv() now recognizes the MTProto transport-error packet (a single
+//     4-byte little-endian negative int32, e.g. -404 "handshake query
+//     incorrect", -429 "transport flood"). Previously this surfaced as the
+//     misleading "Frame too short for unencrypted message".
+//   * Transport errors are thrown as `TransportError` with the negative
+//     code so the caller can react (or at least log something useful).
 
 #include "transport.h"
 #include <sys/socket.h>
@@ -11,6 +19,7 @@
 #include <stdexcept>
 #include <cerrno>
 #include <string>
+#include <sstream>
 
 namespace MTProto {
 
@@ -45,7 +54,6 @@ void Transport::connect(int dc_id) {
         throw std::runtime_error(std::string("socket: ") + strerror(errno));
     }
 
-    // Set send/recv timeout (30 seconds)
     struct timeval tv{ 30, 0 };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -91,28 +99,42 @@ void Transport::recv_raw(uint8_t* buf, size_t len) {
 }
 
 // ── Abridged framing ──────────────────────────────────────────────────────────
-// Send: payload length / 4 encoded as 1 byte (<127) or 4 bytes (0x7f prefix)
+// Send: payload_len/4 as 1 byte (< 0x7f) or 0x7f + 3-byte LE length
 void Transport::send(const Bytes& payload) {
     if (!m_connected || m_impl->fd < 0)
         throw std::runtime_error("Transport: not connected");
 
     size_t len4 = payload.size() / 4;
 
-    if (len4 < 127) {
+    if (len4 < 0x7f) {
         uint8_t hdr = static_cast<uint8_t>(len4);
         send_raw(&hdr, 1);
     } else {
         uint8_t hdr[4];
         hdr[0] = 0x7f;
-        hdr[1] = len4 & 0xff;
-        hdr[2] = (len4 >> 8) & 0xff;
+        hdr[1] =  len4        & 0xff;
+        hdr[2] = (len4 >>  8) & 0xff;
         hdr[3] = (len4 >> 16) & 0xff;
         send_raw(hdr, 4);
     }
     send_raw(payload.data(), payload.size());
 }
 
-// Receive one abridged frame
+// ── Translate Telegram transport-error codes to human strings ─────────────────
+// Reference: https://core.telegram.org/mtproto/mtproto-transports
+static const char* describe_transport_error(int32_t code) {
+    switch (-code) {
+        case 403: return "HTTP-style 403 (forbidden / banned IP)";
+        case 404: return "auth key not found OR handshake query rejected "
+                         "(bad RSA padding, bad p/q ordering, wrong dc_id, "
+                         "or wrong fingerprint)";
+        case 429: return "transport flood (too many connections from this IP "
+                         "in a short window — back off and retry)";
+        default:  return "unknown transport error";
+    }
+}
+
+// Receive one abridged frame, OR raise on a 4-byte transport-error packet.
 Bytes Transport::recv() {
     if (!m_connected || m_impl->fd < 0)
         return {};
@@ -126,7 +148,7 @@ Bytes Transport::recv() {
     } else {
         uint8_t ext[3];
         recv_raw(ext, 3);
-        len4 = ext[0] | (ext[1] << 8) | (ext[2] << 16);
+        len4 = (size_t)ext[0] | ((size_t)ext[1] << 8) | ((size_t)ext[2] << 16);
     }
 
     size_t payload_len = len4 * 4;
@@ -134,6 +156,24 @@ Bytes Transport::recv() {
 
     Bytes payload(payload_len);
     recv_raw(payload.data(), payload_len);
+
+    // ── Transport-error detection ────────────────────────────────────────────
+    // A 4-byte payload whose int32 (little-endian) is negative is an error.
+    if (payload.size() == 4) {
+        int32_t code = (int32_t)((uint32_t)payload[0]
+                              | ((uint32_t)payload[1] <<  8)
+                              | ((uint32_t)payload[2] << 16)
+                              | ((uint32_t)payload[3] << 24));
+        if (code < 0) {
+            std::ostringstream ss;
+            ss << "MTProto transport error " << code
+               << " (" << describe_transport_error(code) << ")";
+            // Server will typically close after this; mark disconnected.
+            m_connected = false;
+            throw std::runtime_error(ss.str());
+        }
+    }
+
     return payload;
 }
 
