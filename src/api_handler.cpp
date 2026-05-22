@@ -53,9 +53,19 @@ static std::string saveBase64ToTemp(const std::string& b64Data, const std::strin
 void ApiHandler::setupRoutes(crow::SimpleApp& app) {
     CROW_ROUTE(app, "/quote").methods(crow::HTTPMethod::POST)(handleQuoteRequest);
     CROW_ROUTE(app, "/api/generate").methods(crow::HTTPMethod::POST)(handleQuoteRequest); // JS API Alias
-    CROW_ROUTE(app, "/debug/logs").methods(crow::HTTPMethod::GET)([](){
-        // Return some recent log lines (we don't have a buffer, so just a placeholder or we can read from a file if we redirected stderr/stdout)
-        return crow::response("Check container logs in HF interface for now. Log redirection not implemented yet.");
+    CROW_ROUTE(app, "/debug/status").methods(crow::HTTPMethod::GET)([](){
+        static TgClient s_diagClient(
+            std::atoi(std::getenv("TG_API_ID") ? std::getenv("TG_API_ID") : "0"),
+            std::getenv("TG_API_HASH") ? std::getenv("TG_API_HASH") : ""
+        );
+        const char* tok = std::getenv("BOT_TOKEN");
+        bool ok = tok ? s_diagClient.authenticate(tok) : false;
+        
+        nlohmann::json d;
+        d["mtproto_connected"] = ok;
+        d["api_id_set"] = (std::getenv("TG_API_ID") != nullptr);
+        d["bot_token_set"] = (tok != nullptr);
+        return crow::response(d.dump());
     });
 }
 

@@ -54,8 +54,8 @@ std::string TextEngine::processEntities(const std::string& text,
             }
             else if (type == "custom_emoji") {
                 uint64_t eid = e.value("custom_emoji_id", 0ULL);
-                // We use alpha='0' to hide the placeholder and face='EmojiPlaceholder' for detection
-                open = "<span face='EmojiPlaceholder' alpha='0'>"; 
+                // Use a very unique size (1.23pt) and alpha='0' as a sentinel
+                open = "<span size='1230' alpha='0' foreground='#00000000'>"; 
                 close = "</span>";
             }
             else { continue; }
