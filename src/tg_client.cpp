@@ -50,7 +50,7 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
     
     int64_t id = r.readInt64();
     int64_t access_hash = r.readInt64();
-    Bytes file_reference = r.readBytes();
+    MTProto::Bytes file_reference = r.readBytes();
     // ... we need more fields but for now let's just get the ID
     
     // 3. upload.getFile location:InputFileLocation offset:int limit:int
