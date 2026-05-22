@@ -217,7 +217,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             }
             sizes.push_back({sh + 8, 0, 0, 0, sh, sw, true});
             maxW = std::max(maxW, sw + kPadLeft + kPadRight);
-            totalH += (sh + 8) + 4;
+            totalH += (sh + 8) + 8; // inter-message gap
             continue;
         }
 
@@ -279,10 +279,10 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         maxW = std::max(maxW, barePHoto ? 0.0 : msgW);
 
         double msgH = barePHoto
-                    ? photoH + 4
+                    ? photoH
                     : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom;
         sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW, false});
-        totalH += msgH + 4;
+        totalH += msgH + 8; // Uniform inter-bubble gap
         g_object_unref(tl); pango_font_description_free(td);
     }
 
@@ -334,7 +334,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             pango_cairo_show_layout(cr, sl);
             g_object_unref(sl); pango_font_description_free(sd);
 
-            curY += sz.h + 4;
+            curY += sz.h + 8;
             continue;
         }
 
@@ -435,7 +435,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             g_object_unref(tl); pango_font_description_free(td);
         }
 
-        curY += sz.h + 4;
+        curY += sz.h + 8;
     }
 
     cairo_surface_write_to_png(surface, outputFile.c_str());

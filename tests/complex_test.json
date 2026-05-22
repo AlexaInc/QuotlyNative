@@ -4,51 +4,48 @@
       "firstName": "Hansaka",
       "lastName": "Alexa",
       "nameColorId": 2,
-      "message": "Welcome to the new C++ Quote Engine! 🚀",
-      "entities": [
-        {
-          "offset": 15,
-          "length": 17,
-          "type": "bold"
-        },
-        {
-          "offset": 37,
-          "length": 2,
-          "type": "custom_emoji",
-          "custom_emoji_id": "5352552264781290450"
-        }
-      ]
+      "message": "Testing the new aspect ratio logic! Here is a wide landscape photo (bare):",
+      "id": 100
     },
     {
       "firstName": "Hansaka",
-      "lastName": "Alexa",
       "nameColorId": 2,
-      "message": "This is a consecutive message from me!"
+      "message": "",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABACAYAAABfU79XAAAAVklEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMcgAAB9067mAAAAABJRU5ErkJggg==",
+      "mediaType": "photo",
+      "id": 100
+    },
+    {
+      "firstName": "Hansaka",
+      "nameColorId": 2,
+      "message": "",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABACAYAAABfU79XAAAAVklEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMcgAAB9067mAAAAABJRU5ErkJggg==",
+      "mediaType": "sticker",
+      "id": 100
     },
     {
       "firstName": "Developer",
       "nameColorId": 5,
-      "message": "Nice! Here's a photo for you:",
-      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
-      "mediaType": "photo"
+      "message": "And here is a tall portrait sticker (bare):",
+      "id": 200
     },
     {
       "firstName": "Developer",
       "nameColorId": 5,
       "message": "",
-      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
-      "mediaType": "sticker"
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABQCAYAAAC6999DAAAAVklEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMcgAAB9067mAAAAABJRU5ErkJggg==",
+      "mediaType": "sticker",
+      "id": 200
     },
     {
       "firstName": "Hansaka",
-      "lastName": "Alexa",
       "nameColorId": 2,
-      "message": "Looks great!",
+      "message": "Looks perfect. The aspect ratio is finally correct! 🚀",
       "replySender": "Developer",
-      "replyMessage": "Nice! Here's a photo for you:",
-      "replySenderColor": 5
+      "replyMessage": "And here is a tall portrait sticker (bare):",
+      "replySenderColor": 5,
+      "id": 100
     }
   ],
-  "transparent": true,
-  "emojiProvider": "apple"
+  "transparent": true
 }

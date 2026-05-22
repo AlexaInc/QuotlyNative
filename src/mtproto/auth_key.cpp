@@ -194,21 +194,32 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
     derive_tmp_aes(server_nonce, new_nonce, aes_key, aes_iv);
     Bytes decrypted = aes_ige_decrypt(encrypted_answer, aes_key, aes_iv);
 
-    // Verify SHA1 of inner data: first 20 bytes = SHA1(decrypted[20:])
+    // DEBUG: Hex dump to find the mismatch cause
+    {
+        auto hex = [](const Bytes& b){
+            std::ostringstream ss;
+            for(size_t i=0; i<std::min(b.size(),(size_t)32); ++i) ss << std::hex << (int)b[i] << " ";
+            return ss.str();
+        };
+        std::cerr << "  [AuthKey] SN: " << hex(server_nonce) << std::endl;
+        std::cerr << "  [AuthKey] NN: " << hex(new_nonce) << std::endl;
+        std::cerr << "  [AuthKey] Dechead: " << hex(decrypted) << std::endl;
+    }
+
     if (decrypted.size() < 24)
         throw std::runtime_error("Decrypted server DH answer too short");
     Bytes inner_data_bytes(decrypted.begin() + 20, decrypted.end());
     Bytes expected_sha1 = Crypto::sha1(inner_data_bytes);
     bool sha1_ok = std::equal(expected_sha1.begin(), expected_sha1.end(), decrypted.begin());
     if (!sha1_ok)
-        std::cerr << "  [AuthKey] ⚠️ SHA1 mismatch in server_DH_inner_data (AES key derivation issue?)" << std::endl;
+        std::cerr << "  [AuthKey] ⚠️ SHA1 mismatch in server_DH_inner_data!" << std::endl;
 
-    // Skip SHA1 hash (20 bytes) at the start
     TLReader r_inner(decrypted, 20);
     cid = r_inner.readInt32();
-    if (cid != TL::server_DH_inner_data)
-        throw std::runtime_error("Expected server_DH_inner_data, got: 0x" + [&](){
-            std::ostringstream ss; ss << std::hex << (uint32_t)cid; return ss.str();}());
+    if (cid != TL::server_DH_inner_data) {
+        std::ostringstream ss; ss << "Expected 0x" << std::hex << TL::server_DH_inner_data << ", got 0x" << (uint32_t)cid;
+        throw std::runtime_error(ss.str());
+    }
 
     r_inner.readInt128(); // nonce
     r_inner.readInt128(); // server_nonce
