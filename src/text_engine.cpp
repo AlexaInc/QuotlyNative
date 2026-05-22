@@ -52,6 +52,11 @@ std::string TextEngine::processEntities(const std::string& text,
                 open  = "<span foreground='#62bcf9'>";
                 close = "</span>";
             }
+            else if (type == "custom_emoji") {
+                uint64_t eid = e.value("custom_emoji_id", 0ULL);
+                open = "<span foreground='#ffcc00' font_desc='bold'>["; // Temporary placeholder style
+                close = " emoji:" + std::to_string(eid) + "]</span>";
+            }
             else { continue; }
 
             tags.push_back({off,       open});

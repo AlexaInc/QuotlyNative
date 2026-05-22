@@ -128,15 +128,20 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                 if (!msg.photoPath.empty()) tempFiles.push_back(msg.photoPath);
             }
 
-            // ── Media Type ───────────────────────────────────────────────────
-            std::string mt = item.value("mediaType", "");
-            if (mt == "sticker") {
-                msg.mediaType = MediaType::Sticker;
-            } else if (mt == "photo" || mt == "image" || mt == "video") {
-                msg.mediaType = MediaType::Photo;
-            } else if (!msg.photoPath.empty()) {
-                // Auto-detect: if media exists but no type, default to photo
-                msg.mediaType = MediaType::Photo;
+            // ── Premium Emojis & Status ─────────────────────────────────────
+            msg.emojiStatusId = item.value("custom_emoji_id", item.value("customemojiid", 0ULL));
+            if (item.contains("from") && item["from"].contains("emoji_status_custom_emoji_id")) {
+                msg.emojiStatusId = item["from"]["emoji_status_custom_emoji_id"];
+            }
+
+            for (const auto& e : entities) {
+                if (e.value("type", "") == "custom_emoji") {
+                    CustomEmoji ce;
+                    ce.offset = e.value("offset", 0);
+                    ce.length = e.value("length", 0);
+                    ce.documentId = e.value("custom_emoji_id", 0ULL);
+                    msg.customEmojis.push_back(ce);
+                }
             }
 
             msgs.push_back(msg);

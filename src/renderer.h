@@ -33,6 +33,12 @@ struct ReplyData {
 
 enum class MediaType { None, Photo, Sticker };
 
+struct CustomEmoji {
+    int offset;
+    int length;
+    uint64_t documentId;
+};
+
 struct MessageData {
     std::string text;                  // raw text
     std::string pangoMarkup;           // processed Pango markup from TextEngine
@@ -42,7 +48,9 @@ struct MessageData {
     bool        isOutgoing  = false;
     ReplyData   reply;
     std::string photoPath;             // path to downloaded photo (if any)
-    MediaType   mediaType   = MediaType::None; // None / Photo / Sticker
+    MediaType   mediaType   = MediaType::None;
+    uint64_t    emojiStatusId = 0;     // custom emoji status ID
+    std::vector<CustomEmoji> customEmojis;
 };
 
 struct RenderOptions {

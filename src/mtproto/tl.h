@@ -81,7 +81,14 @@ namespace TL {
     constexpr int32_t ping                  = (int32_t)0x7abe77ecu;
     constexpr int32_t ping_delay_disconnect = (int32_t)0xf3427b8cu;
     constexpr int32_t pong                  = (int32_t)0x347773c5u;
-    constexpr int32_t msg_container        = (int32_t)0x73f1f8dcu;
+    constexpr int32_t msg_container          = (int32_t)0x73f1f8dcu;
+
+    // ── API Methods / Types ──────────────────────────────────────────────────
+    constexpr int32_t messages_getCustomEmojiDocuments = (int32_t)0xd9da154u;
+    constexpr int32_t upload_getFile                  = (int32_t)0xbe86fe62u;
+    constexpr int32_t document                        = (int32_t)0x8fdccffau;
+    constexpr int32_t upload_file                     = (int32_t)0x096a18d5u;
+    constexpr int32_t photo                           = (int32_t)0xfb197a65u;
 } // namespace TL
 
 } // namespace MTProto

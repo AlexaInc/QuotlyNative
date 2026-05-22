@@ -381,6 +381,25 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
              pango_layout_set_text(nl, msg.senderName.c_str(), -1);
              cairo_move_to(cr, bubbleX + kPadLeft, py + kNamePadTop);
              pango_cairo_show_layout(cr, nl);
+             
+             // ── Emoji Status ─────────────────────────────────────────────
+             if (msg.emojiStatusId != 0) {
+                 int nw, nh; pango_layout_get_pixel_size(nl, &nw, &nh);
+                 double ex = bubbleX + kPadLeft + nw + 6;
+                 double ey = py + kNamePadTop + (nh - 14)/2.0;
+                 // Draw small star icon
+                 cairo_set_source_rgba(cr, 1, 0.8, 0, 1); // Yellow
+                 cairo_save(cr);
+                 cairo_translate(cr, ex + 7, ey + 7);
+                 for (int k=0; k<5; ++k) {
+                     cairo_line_to(cr, 7 * cos(k*2*M_PI/5 - M_PI/2), 7 * sin(k*2*M_PI/5 - M_PI/2));
+                     cairo_line_to(cr, 3 * cos(k*2*M_PI/5 + M_PI/5 - M_PI/2), 3 * sin(k*2*M_PI/5 + M_PI/5 - M_PI/2));
+                 }
+                 cairo_close_path(cr);
+                 cairo_fill(cr);
+                 cairo_restore(cr);
+             }
+
              py += sz.nameH; g_object_unref(nl); pango_font_description_free(nd);
         }
 
