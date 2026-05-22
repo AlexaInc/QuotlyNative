@@ -75,14 +75,39 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
 
     apiLog("[TgClient] Found Document ID: " + std::to_string(doc_id));
 
-    // ... (helper logic)
-    skipPhotoSizeVector(r);
-    skipPhotoSizeVector(r);
+    // 2. Local Helper to skip PhotoSize vector
+    auto skipPhotoSizeVector = [&](MTProto::TLReader& reader) {
+        int32_t vt = reader.readInt32();
+        if (vt != MTProto::TL::vector) return;
+        int32_t c = reader.readInt32();
+        for (int i=0; i<c; ++i) {
+            int32_t tid = reader.readInt32();
+            if (tid == MTProto::TL::photoSize) { // 0x77c01b79
+                reader.readString(); // type
+                reader.readInt32(); reader.readInt32(); reader.readInt32(); reader.readInt32(); // location
+                reader.readInt32(); reader.readInt32(); // w, h
+                reader.readInt32(); // size
+            } else if (tid == MTProto::TL::photoCachedSize) { // 0xe9a73486
+                reader.readString(); // type
+                reader.readInt32(); reader.readInt32(); reader.readInt32(); reader.readInt32(); // location
+                reader.readInt32(); reader.readInt32(); // w, h
+                reader.readBytes(); // bytes
+            } else if (tid == 0x111e5e11) { // photoSizeEmpty
+                reader.readString();
+            }
+        }
+    };
+
+    skipPhotoSizeVector(r); // thumbs
+    skipPhotoSizeVector(r); // video_thumbs
+    
     r.readInt32(); // dc_id
+
+    // Skip Attributes vector
     int32_t attrVec = r.readInt32();
     if (attrVec == MTProto::TL::vector) {
         int32_t ac = r.readInt32();
-        for (int i=0; i<ac; ++i) r.readInt32();
+        for (int i=0; i<ac; ++i) r.readInt32(); // constructor id (skip simple)
     }
 
     apiLog("[TgClient] Downloading document...");
