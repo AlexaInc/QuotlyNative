@@ -423,6 +423,7 @@ void Renderer::renderQuote(
 
             // ── Emoji Status ─────────────────────────────────────────────
             if (msg.emojiStatusId != 0 && emojiMap.count(msg.emojiStatusId)) {
+                std::cout << "[Renderer] Drawing status emoji: " << msg.emojiStatusId << std::endl;
                 int nw, nh; pango_layout_get_pixel_size(nl, &nw, &nh);
                 drawEmojiSurface(cr, bubbleX + kPadLeft + nw + 4,
                                  py + kNamePadTop + (nh - 20)/2.0,
@@ -497,16 +498,23 @@ void Renderer::renderQuote(
                     if (!run) continue;
                     PangoFontDescription* rd = pango_font_describe(run->item->analysis.font);
                     const char* fam = pango_font_description_get_family(rd);
-                    if (fam && std::string(fam) == "EmojiPlaceholder" && emojiIdx < msg.customEmojis.size()) {
-                        uint64_t eid = msg.customEmojis[emojiIdx].documentId;
-                        if (emojiMap.count(eid)) {
-                            PangoRectangle rect;
-                            pango_layout_iter_get_run_extents(iter, NULL, &rect);
-                            double ex = bubbleX + kPadLeft + PANGO_PIXELS(rect.x);
-                            double ey = py + PANGO_PIXELS(rect.y) + (PANGO_PIXELS(rect.height) - 22)/2.0;
-                            drawEmojiSurface(cr, ex, ey, 22, emojiMap.at(eid));
+                    if (fam) {
+                        std::string famStr(fam);
+                        if (famStr == "EmojiPlaceholder" && emojiIdx < msg.customEmojis.size()) {
+                            uint64_t eid = msg.customEmojis[emojiIdx].documentId;
+                            std::cout << "[Renderer] Found EmojiPlaceholder run for id: " << eid << std::endl;
+                            if (emojiMap.count(eid)) {
+                                PangoRectangle rect;
+                                pango_layout_iter_get_run_extents(iter, NULL, &rect);
+                                double ex = bubbleX + kPadLeft + PANGO_PIXELS(rect.x);
+                                double ey = py + PANGO_PIXELS(rect.y) + (PANGO_PIXELS(rect.height) - 22)/2.0;
+                                std::cout << "[Renderer] Drawing surface at " << ex << ", " << ey << std::endl;
+                                drawEmojiSurface(cr, ex, ey, 22, emojiMap.at(eid));
+                            } else {
+                                std::cout << "[Renderer] Asset NOT in emojiMap: " << eid << std::endl;
+                            }
+                            emojiIdx++;
                         }
-                        emojiIdx++;
                     }
                     pango_font_description_free(rd);
                 } while (pango_layout_iter_next_run(iter));

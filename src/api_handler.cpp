@@ -167,24 +167,40 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
         }();
 
         if (s_tgConnected) {
+            std::cout << "[QuoteAPI] MTProto Connected. Fetching " << msgs.size() << " messages' emojis..." << std::endl;
             for (const auto& m : msgs) {
                 if (m.emojiStatusId != 0 && emojiMap.find(m.emojiStatusId) == emojiMap.end()) {
+                    std::cout << "[QuoteAPI] Fetching status emoji: " << m.emojiStatusId << std::endl;
                     std::string path = s_tgClient.fetchCustomEmoji(std::to_string(m.emojiStatusId));
-                    if (!path.empty()) emojiMap[m.emojiStatusId] = path;
+                    if (!path.empty()) {
+                        std::cout << "[QuoteAPI] Success: " << path << std::endl;
+                        emojiMap[m.emojiStatusId] = path;
+                    } else {
+                        std::cout << "[QuoteAPI] Failed to fetch status emoji" << std::endl;
+                    }
                 }
                 for (const auto& ce : m.customEmojis) {
                     if (emojiMap.find(ce.documentId) == emojiMap.end()) {
+                        std::cout << "[QuoteAPI] Fetching inline emoji: " << ce.documentId << std::endl;
                         std::string path = s_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
-                        if (!path.empty()) emojiMap[ce.documentId] = path;
+                        if (!path.empty()) {
+                            std::cout << "[QuoteAPI] Success: " << path << std::endl;
+                            emojiMap[ce.documentId] = path;
+                        } else {
+                            std::cout << "[QuoteAPI] Failed to fetch inline emoji" << std::endl;
+                        }
                     }
                 }
             }
+        } else {
+            std::cerr << "[QuoteAPI] ⚠️ MTProto NOT Connected. Skipping emojis." << std::endl;
         }
 
         RenderOptions options;
         options.transparent = transparent;
         options.hasBubble = true;
 
+        std::cout << "[QuoteAPI] Rendering quote with " << emojiMap.size() << " cached emojis" << std::endl;
         Renderer::renderQuote(outputPath, msgs, options, emojiMap);
 
         std::ifstream file(outputPath, std::ios::binary);

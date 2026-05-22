@@ -1,7 +1,7 @@
 import requests
 import json
 
-url = "https://quotlytga-quotecpp.hf.space/quote/api/generate"
+url = "https://quotlytga-quotecpp.hf.space/api/generate"
 
 tests = [
     {
@@ -28,16 +28,35 @@ tests = [
         }
     },
     {
-        "name": "Status only",
+        "name": "Multi Message Mixed",
         "payload": {
             "messages": [
                 {
                     "from": {
                         "id": 12345678,
-                        "first_name": "Status_User",
+                        "first_name": "Premium_User",
                         "emoji_status_custom_emoji_id": 5352552264781290450
                     },
-                    "text": "Only status emoji test"
+                    "text": "Hello, I am premium! 🌟",
+                    "entities": [
+                        {
+                            "offset": 22,
+                            "length": 2,
+                            "type": "custom_emoji",
+                            "custom_emoji_id": 5352552264781290450
+                        }
+                    ]
+                },
+                {
+                    "from": {
+                        "id": 87654321,
+                        "first_name": "Normal_User"
+                    },
+                    "text": "And I am a normal user.",
+                    "reply_to_message": {
+                        "from": { "id": 12345678, "first_name": "Premium_User" },
+                        "text": "Hello, I am premium! 🌟"
+                    }
                 }
             ]
         }
