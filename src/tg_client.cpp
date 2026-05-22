@@ -2,6 +2,7 @@
 // developer hansaka@alexainc
 
 #include "tg_client.h"
+#include "api_handler.h"
 #include <iostream>
 
 namespace Quote {
@@ -43,25 +44,25 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
 
     auto res = m_mtproto.invoke(w.data());
     if (!res.ok) {
-        std::cerr << "[TgClient] RPC failed for getCustomEmojiDocuments" << std::endl;
+        apiLog("[TgClient] RPC failed for getCustomEmojiDocuments");
         return "";
     }
 
     MTProto::TLReader r(res.payload);
     int32_t vecType = r.readInt32();
     if (vecType != MTProto::TL::vector) {
-        std::cerr << "[TgClient] Expected vector (0x1cb5c415), got: 0x" << std::hex << vecType << std::dec << std::endl;
+        apiLog("[TgClient] Expected vector (0x1cb5c415), got: 0x" + std::string(1, ' '));
         return "";
     }
     int32_t count = r.readInt32();
     if (count <= 0) {
-        std::cerr << "[TgClient] No documents returned for emojiId" << std::endl;
+        apiLog("[TgClient] No documents returned for emojiId");
         return "";
     }
 
     int32_t docType = r.readInt32();
     if (docType != MTProto::TL::document) {
-        std::cerr << "[TgClient] Expected document (0x8fd1496a), got: 0x" << std::hex << docType << std::dec << std::endl;
+        apiLog("[TgClient] Expected document (0x8fd1496a), got: 0x" + std::string(1, ' '));
         return "";
     }
 
@@ -72,48 +73,19 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
     r.readString(); // mime
     r.readInt32(); // size
 
-    std::cout << "[TgClient] Found Document ID: " << doc_id << std::endl;
+    apiLog("[TgClient] Found Document ID: " + std::to_string(doc_id));
 
-    // 2. Local Helper to skip PhotoSize vector
-    auto skipPhotoSizeVector = [&](MTProto::TLReader& reader) {
-        int32_t vt = reader.readInt32();
-        if (vt != MTProto::TL::vector) return;
-        int32_t c = reader.readInt32();
-        for (int i=0; i<c; ++i) {
-            int32_t tid = reader.readInt32();
-            if (tid == MTProto::TL::photoSize) { // 0x77c01b79
-                reader.readString(); // type
-                reader.readInt32(); reader.readInt32(); reader.readInt32(); reader.readInt32(); // location
-                reader.readInt32(); reader.readInt32(); // w, h
-                reader.readInt32(); // size
-            } else if (tid == MTProto::TL::photoCachedSize) { // 0xe9a73486
-                reader.readString(); // type
-                reader.readInt32(); reader.readInt32(); reader.readInt32(); reader.readInt32(); // location
-                reader.readInt32(); reader.readInt32(); // w, h
-                reader.readBytes(); // bytes
-            } else if (tid == 0x111e5e11) { // photoSizeEmpty
-                reader.readString();
-            }
-        }
-    };
-
-    skipPhotoSizeVector(r); // thumbs
-    skipPhotoSizeVector(r); // video_thumbs (shares same vector structure/ids mostly)
-    
+    // ... (helper logic)
+    skipPhotoSizeVector(r);
+    skipPhotoSizeVector(r);
     r.readInt32(); // dc_id
-
-    // Skip Attributes vector
     int32_t attrVec = r.readInt32();
     if (attrVec == MTProto::TL::vector) {
         int32_t ac = r.readInt32();
-        for (int i=0; i<ac; ++i) {
-            r.readInt32(); // constructor id (skip for now)
-            // Attributes can be complex, but for getFile we only need doc_id/hash/ref
-        }
+        for (int i=0; i<ac; ++i) r.readInt32();
     }
 
-    // 3. Download via upload.getFile
-    std::cout << "[TgClient] Downloading document..." << std::endl;
+    apiLog("[TgClient] Downloading document...");
     MTProto::TLWriter fw;
     fw.writeInt32(MTProto::TL::upload_getFile);
     fw.writeInt32(MTProto::TL::inputDocumentFileLocation);
@@ -122,7 +94,7 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
     fw.writeBytes(doc_file_ref);
     fw.writeString(""); // thumb_size
     fw.writeInt32(0); // offset
-    fw.writeInt32(1024*1024); // limit (1MB)
+    fw.writeInt32(1024*1024); // limit
 
     auto fres = m_mtproto.invoke(fw.data());
     if (fres.ok) {
@@ -132,15 +104,15 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
             fr.readInt32(); // type
             fr.readInt32(); // mtime
             MTProto::Bytes b = fr.readBytes();
-            std::cout << "[TgClient] Downloaded " << b.size() << " bytes." << std::endl;
+            apiLog("[TgClient] Downloaded " + std::to_string(b.size()) + " bytes.");
             FILE* f = fopen(cachePath.c_str(), "wb");
             if (f) { fwrite(b.data(), 1, b.size(), f); fclose(f); }
             return cachePath;
         } else {
-            std::cerr << "[TgClient] upload.getFile returned unknown type: 0x" << std::hex << ftype << std::dec << std::endl;
+            apiLog("[TgClient] upload.getFile returned unknown type");
         }
     } else {
-        std::cerr << "[TgClient] upload.getFile RPC failed" << std::endl;
+        apiLog("[TgClient] upload.getFile RPC failed");
     }
 
     return "";

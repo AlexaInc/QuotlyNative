@@ -7,6 +7,8 @@
 
 namespace Quote {
 
+extern void apiLog(const std::string& msg);
+
 class ApiHandler {
 public:
     static void setupRoutes(crow::SimpleApp& app);

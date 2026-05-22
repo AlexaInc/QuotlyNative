@@ -4,12 +4,16 @@ import json
 url = "https://quotlytga-quotecpp.hf.space/api/generate"
 status_url = "https://quotlytga-quotecpp.hf.space/debug/status"
 
-print("Checking server status...")
+print("Checking server status & logs...")
 try:
     sr = requests.get(status_url, timeout=10)
     print(f"Server Status: {sr.text}")
+    lr = requests.get("https://quotlytga-quotecpp.hf.space/debug/logs", timeout=10)
+    print("--- Server Logs ---")
+    print(lr.text)
+    print("-------------------")
 except Exception as e:
-    print(f"Failed to check status: {e}")
+    print(f"Failed to check logs: {e}")
 
 tests = [
     {

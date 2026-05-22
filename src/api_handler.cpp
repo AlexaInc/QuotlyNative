@@ -20,7 +20,7 @@ namespace Quote {
 static std::string g_apiLogs;
 static std::mutex g_logMutex;
 
-static void apiLog(const std::string& msg) {
+void apiLog(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_logMutex);
     g_apiLogs += msg + "\n";
     if (g_apiLogs.size() > 50000) g_apiLogs = g_apiLogs.substr(25000); // Keep last 25KB
