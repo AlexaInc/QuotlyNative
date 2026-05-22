@@ -286,7 +286,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
         g_object_unref(tl); pango_font_description_free(td);
     }
 
-    double canvasW = kCanvasPad + kAvatarSize + kAvatarMarginRight + maxW + kTailWidth + kCanvasPad;
+    double canvasW = kCanvasPad + kAvatarSize + kAvatarMarginRight + kMsgMaxWidth + kTailWidth + kCanvasPad;
     double canvasH = kCanvasPad + std::max(totalH, kAvatarSize) + kCanvasPad;
     cairo_destroy(measure_cr); cairo_surface_destroy(measure_surf);
 
@@ -349,6 +349,10 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             showBubble = false;
             showName = false;
         }
+
+        double bubbleX = msg.isOutgoing 
+            ? (kCanvasPad + kAvatarSize + kAvatarMarginRight + (kMsgMaxWidth - sz.bubbleW))
+            : (kCanvasPad + kAvatarSize + kAvatarMarginRight);
 
         if (showBubble) {
             RenderOptions mOpts = options;

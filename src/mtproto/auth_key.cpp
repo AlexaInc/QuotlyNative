@@ -204,13 +204,28 @@ AuthKey generate_auth_key(Transport& transport, int dc_id) {
         std::cerr << "  [AuthKey] Dechead: " << hex(decrypted) << std::endl;
     }
 
+    // Verify SHA1 of inner data
     if (decrypted.size() < 24)
         throw std::runtime_error("Decrypted server DH answer too short");
-    Bytes inner_data_bytes(decrypted.begin() + 20, decrypted.end());
-    Bytes expected_sha1 = Crypto::sha1(inner_data_bytes);
+    
+    // CID check before SHA1 to see if we are even close
+    unsigned char* d = decrypted.data();
+    uint32_t got_cid = d[20] | (d[21] << 8) | (d[22] << 16) | (d[23] << 24);
+    
+    if (got_cid != TL::server_DH_inner_data) {
+        std::cerr << "  [AuthKey] ❌ CID mismatch! Expected 0x" << std::hex << TL::server_DH_inner_data 
+                  << " got 0x" << got_cid << std::endl;
+        // Check if maybe it's big-endian? (unlikely for TL but good for debug)
+        uint32_t be_cid = d[23] | (d[22] << 8) | (d[21] << 16) | (d[20] << 24);
+        std::cerr << "  [AuthKey]    (Big-endian check: 0x" << be_cid << ")" << std::endl;
+    }
+
+    Bytes inner_data_part(decrypted.begin() + 20, decrypted.end());
+    Bytes expected_sha1 = Crypto::sha1(inner_data_part);
     bool sha1_ok = std::equal(expected_sha1.begin(), expected_sha1.end(), decrypted.begin());
-    if (!sha1_ok)
+    if (!sha1_ok) {
         std::cerr << "  [AuthKey] ⚠️ SHA1 mismatch in server_DH_inner_data!" << std::endl;
+    }
 
     TLReader r_inner(decrypted, 20);
     cid = r_inner.readInt32();
