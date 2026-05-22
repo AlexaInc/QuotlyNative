@@ -25,14 +25,16 @@ bool TgClient::authenticate(const std::string& botToken) {
 }
 
 std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
-    if (!m_mtproto.is_connected()) return "";
+    if (!m_mtproto.is_connected()) {
+        std::cerr << "[TgClient] Error: Not connected" << std::endl;
+        return "";
+    }
     uint64_t eid = std::stoull(emojiId);
-    
-    // 1. Check Cache
     std::string cachePath = "/tmp/emoji_" + emojiId + ".png";
-    // (Actual file checking would go here, for now we re-download for verification)
 
-    // 2. messages.getCustomEmojiDocuments document_id:Vector<long>
+    std::cout << "[TgClient] Fetching doc for emoji: " << eid << std::endl;
+
+    // 1. messages.getCustomEmojiDocuments
     MTProto::TLWriter w;
     w.writeInt32(MTProto::TL::messages_getCustomEmojiDocuments);
     w.writeInt32(MTProto::TL::vector);
@@ -40,74 +42,105 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
     w.writeInt64(eid);
 
     auto res = m_mtproto.invoke(w.data());
-    if (!res.ok) return "";
+    if (!res.ok) {
+        std::cerr << "[TgClient] RPC failed for getCustomEmojiDocuments" << std::endl;
+        return "";
+    }
 
     MTProto::TLReader r(res.payload);
-    if (r.readInt32() != MTProto::TL::vector) return "";
-    if (r.readInt32() <= 0) return "";
-    if (r.readInt32() != MTProto::TL::document) return "";
+    int32_t vecType = r.readInt32();
+    if (vecType != MTProto::TL::vector) {
+        std::cerr << "[TgClient] Expected vector (0x1cb5c415), got: 0x" << std::hex << vecType << std::dec << std::endl;
+        return "";
+    }
+    int32_t count = r.readInt32();
+    if (count <= 0) {
+        std::cerr << "[TgClient] No documents returned for emojiId" << std::endl;
+        return "";
+    }
 
-    int64_t doc_id        = r.readInt64();
+    int32_t docType = r.readInt32();
+    if (docType != MTProto::TL::document) {
+        std::cerr << "[TgClient] Expected document (0x8fd1496a), got: 0x" << std::hex << docType << std::dec << std::endl;
+        return "";
+    }
+
+    int64_t doc_id          = r.readInt64();
     int64_t doc_access_hash = r.readInt64();
     MTProto::Bytes doc_file_ref = r.readBytes();
     r.readInt32(); // date
     r.readString(); // mime
     r.readInt32(); // size
 
-    // 3. Parse Thumbs vector
-    if (r.readInt32() != MTProto::TL::vector) return "";
-    int32_t thumbCount = r.readInt32();
-    
-    int64_t target_id = doc_id;
-    int64_t target_ah = doc_access_hash;
-    MTProto::Bytes target_ref = doc_file_ref;
-    std::string target_type = "";
-    bool isThumb = false;
+    std::cout << "[TgClient] Found Document ID: " << doc_id << std::endl;
 
-    for (int i=0; i<thumbCount; ++i) {
-        int32_t tcid = r.readInt32();
-        if (tcid == MTProto::TL::photoSize) {
-            std::string type = r.readString();
-            r.readInt32(); r.readInt32(); r.readInt32(); r.readInt32(); // location fields
-            r.readInt32(); r.readInt32(); // w, h
-            r.readInt32(); // total size
-            if (target_type == "") { target_type = type; isThumb = true; }
-        } else if (tcid == MTProto::TL::photoCachedSize) {
-            std::string type = r.readString();
-            r.readInt32(); r.readInt32(); r.readInt32(); r.readInt32(); // location fields
-            r.readInt32(); r.readInt32(); // w, h
-            MTProto::Bytes b = r.readBytes();
-            if (!b.empty()) {
-                // We got it! Save and return
-                FILE* f = fopen(cachePath.c_str(), "wb");
-                if (f) { fwrite(b.data(), 1, b.size(), f); fclose(f); }
-                return cachePath;
+    // 2. Local Helper to skip PhotoSize vector
+    auto skipPhotoSizeVector = [&](MTProto::TLReader& reader) {
+        int32_t vt = reader.readInt32();
+        if (vt != MTProto::TL::vector) return;
+        int32_t c = reader.readInt32();
+        for (int i=0; i<c; ++i) {
+            int32_t tid = reader.readInt32();
+            if (tid == MTProto::TL::photoSize) { // 0x77c01b79
+                reader.readString(); // type
+                reader.readInt32(); reader.readInt32(); reader.readInt32(); reader.readInt32(); // location
+                reader.readInt32(); reader.readInt32(); // w, h
+                reader.readInt32(); // size
+            } else if (tid == MTProto::TL::photoCachedSize) { // 0xe9a73486
+                reader.readString(); // type
+                reader.readInt32(); reader.readInt32(); reader.readInt32(); reader.readInt32(); // location
+                reader.readInt32(); reader.readInt32(); // w, h
+                reader.readBytes(); // bytes
+            } else if (tid == 0x111e5e11) { // photoSizeEmpty
+                reader.readString();
             }
-        } else { /* skip unknown */ }
+        }
+    };
+
+    skipPhotoSizeVector(r); // thumbs
+    skipPhotoSizeVector(r); // video_thumbs (shares same vector structure/ids mostly)
+    
+    r.readInt32(); // dc_id
+
+    // Skip Attributes vector
+    int32_t attrVec = r.readInt32();
+    if (attrVec == MTProto::TL::vector) {
+        int32_t ac = r.readInt32();
+        for (int i=0; i<ac; ++i) {
+            r.readInt32(); // constructor id (skip for now)
+            // Attributes can be complex, but for getFile we only need doc_id/hash/ref
+        }
     }
 
-    // 4. upload.getFile location:InputDocumentFileLocation offset:0 limit:1MB
+    // 3. Download via upload.getFile
+    std::cout << "[TgClient] Downloading document..." << std::endl;
     MTProto::TLWriter fw;
     fw.writeInt32(MTProto::TL::upload_getFile);
     fw.writeInt32(MTProto::TL::inputDocumentFileLocation);
     fw.writeInt64(doc_id);
     fw.writeInt64(doc_access_hash);
     fw.writeBytes(doc_file_ref);
-    fw.writeString(""); // thumb_size empty = full doc
+    fw.writeString(""); // thumb_size
     fw.writeInt32(0); // offset
-    fw.writeInt32(1024*1024); // limit
+    fw.writeInt32(1024*1024); // limit (1MB)
 
     auto fres = m_mtproto.invoke(fw.data());
     if (fres.ok) {
         MTProto::TLReader fr(fres.payload);
-        if (fr.readInt32() == MTProto::TL::upload_file) {
+        int32_t ftype = fr.readInt32();
+        if (ftype == MTProto::TL::upload_file) {
             fr.readInt32(); // type
             fr.readInt32(); // mtime
             MTProto::Bytes b = fr.readBytes();
+            std::cout << "[TgClient] Downloaded " << b.size() << " bytes." << std::endl;
             FILE* f = fopen(cachePath.c_str(), "wb");
             if (f) { fwrite(b.data(), 1, b.size(), f); fclose(f); }
             return cachePath;
+        } else {
+            std::cerr << "[TgClient] upload.getFile returned unknown type: 0x" << std::hex << ftype << std::dec << std::endl;
         }
+    } else {
+        std::cerr << "[TgClient] upload.getFile RPC failed" << std::endl;
     }
 
     return "";

@@ -17,6 +17,15 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace Quote {
+static std::string g_apiLogs;
+static std::mutex g_logMutex;
+
+static void apiLog(const std::string& msg) {
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    g_apiLogs += msg + "\n";
+    if (g_apiLogs.size() > 50000) g_apiLogs = g_apiLogs.substr(25000); // Keep last 25KB
+    std::cout << msg << std::endl;
+}
 
 // ── Base64 Decoding Helper ───────────────────────────────────────────────────
 static std::string base64Decode(const std::string& in) {
@@ -53,19 +62,9 @@ static std::string saveBase64ToTemp(const std::string& b64Data, const std::strin
 void ApiHandler::setupRoutes(crow::SimpleApp& app) {
     CROW_ROUTE(app, "/quote").methods(crow::HTTPMethod::POST)(handleQuoteRequest);
     CROW_ROUTE(app, "/api/generate").methods(crow::HTTPMethod::POST)(handleQuoteRequest); // JS API Alias
-    CROW_ROUTE(app, "/debug/status").methods(crow::HTTPMethod::GET)([](){
-        static TgClient s_diagClient(
-            std::atoi(std::getenv("TG_API_ID") ? std::getenv("TG_API_ID") : "0"),
-            std::getenv("TG_API_HASH") ? std::getenv("TG_API_HASH") : ""
-        );
-        const char* tok = std::getenv("BOT_TOKEN");
-        bool ok = tok ? s_diagClient.authenticate(tok) : false;
-        
-        nlohmann::json d;
-        d["mtproto_connected"] = ok;
-        d["api_id_set"] = (std::getenv("TG_API_ID") != nullptr);
-        d["bot_token_set"] = (tok != nullptr);
-        return crow::response(d.dump());
+    CROW_ROUTE(app, "/debug/logs").methods(crow::HTTPMethod::GET)([](){
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        return crow::response(g_apiLogs);
     });
 }
 
@@ -181,40 +180,40 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
         }();
 
         if (s_tgConnected) {
-            std::cout << "[QuoteAPI] MTProto Connected. Fetching " << msgs.size() << " messages' emojis..." << std::endl;
+            apiLog("[QuoteAPI] handleQuoteRequest " + std::to_string(msgs.size()) + " messages");
             for (const auto& m : msgs) {
                 if (m.emojiStatusId != 0 && emojiMap.find(m.emojiStatusId) == emojiMap.end()) {
-                    std::cout << "[QuoteAPI] Fetching status emoji: " << m.emojiStatusId << std::endl;
+                    apiLog("[QuoteAPI] Fetching status emoji: " + std::to_string(m.emojiStatusId));
                     std::string path = s_tgClient.fetchCustomEmoji(std::to_string(m.emojiStatusId));
                     if (!path.empty()) {
-                        std::cout << "[QuoteAPI] Success: " << path << std::endl;
+                        apiLog("[QuoteAPI] Success: " + path);
                         emojiMap[m.emojiStatusId] = path;
                     } else {
-                        std::cout << "[QuoteAPI] Failed to fetch status emoji" << std::endl;
+                        apiLog("[QuoteAPI] Failed to fetch status emoji");
                     }
                 }
                 for (const auto& ce : m.customEmojis) {
                     if (emojiMap.find(ce.documentId) == emojiMap.end()) {
-                        std::cout << "[QuoteAPI] Fetching inline emoji: " << ce.documentId << std::endl;
+                        apiLog("[QuoteAPI] Fetching inline emoji: " + std::to_string(ce.documentId));
                         std::string path = s_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
                         if (!path.empty()) {
-                            std::cout << "[QuoteAPI] Success: " << path << std::endl;
+                            apiLog("[QuoteAPI] Success: " + path);
                             emojiMap[ce.documentId] = path;
                         } else {
-                            std::cout << "[QuoteAPI] Failed to fetch inline emoji" << std::endl;
+                            apiLog("[QuoteAPI] Failed to fetch inline emoji");
                         }
                     }
                 }
             }
         } else {
-            std::cerr << "[QuoteAPI] ⚠️ MTProto NOT Connected. Skipping emojis." << std::endl;
+            apiLog("[QuoteAPI] ⚠️ MTProto NOT Connected. Skipping emojis.");
         }
 
         RenderOptions options;
         options.transparent = transparent;
         options.hasBubble = true;
 
-        std::cout << "[QuoteAPI] Rendering quote with " << emojiMap.size() << " cached emojis" << std::endl;
+        apiLog("[QuoteAPI] Rendering quote with " + std::to_string(emojiMap.size()) + " cached emojis");
         Renderer::renderQuote(outputPath, msgs, options, emojiMap);
 
         std::ifstream file(outputPath, std::ios::binary);

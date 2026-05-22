@@ -2,6 +2,14 @@ import requests
 import json
 
 url = "https://quotlytga-quotecpp.hf.space/api/generate"
+status_url = "https://quotlytga-quotecpp.hf.space/debug/status"
+
+print("Checking server status...")
+try:
+    sr = requests.get(status_url, timeout=10)
+    print(f"Server Status: {sr.text}")
+except Exception as e:
+    print(f"Failed to check status: {e}")
 
 tests = [
     {
