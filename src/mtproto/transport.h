@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 
 // Forward-declare Boost types without including full headers in .h
 namespace boost { namespace asio {
@@ -22,6 +23,11 @@ namespace MTProto {
 
 // ── DC address table ──────────────────────────────────────────────────────────
 struct DcAddress { const char* host; uint16_t port; };
+
+class TransportTimeoutError : public std::runtime_error {
+public:
+    explicit TransportTimeoutError(const std::string& what_arg) : std::runtime_error(what_arg) {}
+};
 
 constexpr DcAddress DC_ADDRESSES[6] = {
     {},                                    // [0] unused — DCs are 1-indexed

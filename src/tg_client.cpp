@@ -2,22 +2,52 @@
 // developer hansaka@alexainc
 
 #include "tg_client.h"
-#include <iostream>
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <sys/stat.h>
-#include <nlohmann/json.hpp>
-#include <array>
+#include <iostream>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <nlohmann/json.hpp>
+#include <sys/stat.h>
 
 namespace Quote {
 
 void apiLog(const std::string& msg);
 static bool fileExists(const std::string& path);
 
-TgClient::TgClient(int apiId, const std::string& apiHash) 
+namespace {
+std::mutex g_failedEmojiMutex;
+std::map<std::string, std::chrono::steady_clock::time_point> g_failedEmojiCache;
+constexpr auto kFailedEmojiBackoff = std::chrono::minutes(2);
+
+bool wasRecentFailure(const std::string& emojiId) {
+    std::lock_guard<std::mutex> lock(g_failedEmojiMutex);
+    auto it = g_failedEmojiCache.find(emojiId);
+    if (it == g_failedEmojiCache.end()) return false;
+    if (std::chrono::steady_clock::now() - it->second > kFailedEmojiBackoff) {
+        g_failedEmojiCache.erase(it);
+        return false;
+    }
+    return true;
+}
+
+void rememberFailure(const std::string& emojiId) {
+    std::lock_guard<std::mutex> lock(g_failedEmojiMutex);
+    g_failedEmojiCache[emojiId] = std::chrono::steady_clock::now();
+}
+
+void clearFailure(const std::string& emojiId) {
+    std::lock_guard<std::mutex> lock(g_failedEmojiMutex);
+    g_failedEmojiCache.erase(emojiId);
+}
+}
+
+TgClient::TgClient(int apiId, const std::string& apiHash)
     : m_apiId(apiId), m_apiHash(apiHash) {
-    // Client is constructed automatically
 }
 
 TgClient::~TgClient() {
@@ -25,14 +55,13 @@ TgClient::~TgClient() {
 }
 
 bool TgClient::authenticate(const std::string& botToken) {
+    if (m_mtproto.is_connected()) return true;
     if (m_apiId <= 0 || m_apiHash.empty() || botToken.empty()) {
         std::cerr << "TgClient: Missing credentials." << std::endl;
         return false;
     }
-    // Connect to DC 2 by default
     return m_mtproto.connect(botToken, 2);
 }
-
 
 static std::string shellQuote(const std::string& s) {
     std::string out = "'";
@@ -63,17 +92,20 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
     const char* tok = std::getenv("BOT_TOKEN");
     if (!tok || !*tok) return "";
     std::string token(tok);
+
     try {
         std::string ids = "[\"" + emojiId + "\"]";
         std::string url = "https://api.telegram.org/bot" + token + "/getCustomEmojiStickers";
-        std::string cmd = "curl -sS --max-time 20 -X POST --data-urlencode custom_emoji_ids=" + shellQuote(ids) + " " + shellQuote(url);
+        std::string cmd =
+            "curl -sSf --connect-timeout 3 --max-time 8 -X POST --data-urlencode custom_emoji_ids=" +
+            shellQuote(ids) + " " + shellQuote(url);
         std::string body = runCommandCapture(cmd);
         if (body.empty()) return "";
+
         auto j = nlohmann::json::parse(body);
         if (!j.value("ok", false) || !j.contains("result") || j["result"].empty()) return "";
         const auto& st = j["result"][0];
 
-        // Prefer static thumbnail (usually WEBP) so Cairo can render it after dwebp conversion.
         std::string fileId;
         if (st.contains("thumbnail") && st["thumbnail"].contains("file_id")) fileId = st["thumbnail"].value("file_id", "");
         else if (st.contains("thumb") && st["thumb"].contains("file_id")) fileId = st["thumb"].value("file_id", "");
@@ -81,8 +113,9 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
         if (fileId.empty()) return "";
 
         std::string getFileUrl = "https://api.telegram.org/bot" + token + "/getFile?file_id=" + fileId;
-        std::string fileBody = runCommandCapture("curl -sS --max-time 20 " + shellQuote(getFileUrl));
+        std::string fileBody = runCommandCapture("curl -sSf --connect-timeout 3 --max-time 8 " + shellQuote(getFileUrl));
         if (fileBody.empty()) return "";
+
         auto fj = nlohmann::json::parse(fileBody);
         if (!fj.value("ok", false) || !fj.contains("result")) return "";
         std::string filePath = fj["result"].value("file_path", "");
@@ -91,8 +124,11 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
         mkdir("emoji_cache", 0777);
         std::string out = std::string("emoji_cache") + "/emoji_" + emojiId + "_botapi" + extFromPath(filePath);
         if (fileExists(out)) return out;
+
         std::string downloadUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
-        int rc = system(("curl -L -sS --max-time 30 -o " + shellQuote(out) + " " + shellQuote(downloadUrl)).c_str());
+        int rc = system((
+            "curl -L -sSf --connect-timeout 3 --max-time 12 -o " + shellQuote(out) + " " + shellQuote(downloadUrl)
+        ).c_str());
         if (rc == 0 && fileExists(out)) {
             apiLog("[TgClient] Bot API emoji asset: " + out);
             return out;
@@ -100,6 +136,7 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
     } catch (const std::exception& e) {
         apiLog(std::string("[TgClient] Bot API fallback failed: ") + e.what());
     }
+
     return "";
 }
 
@@ -150,13 +187,12 @@ static void considerThumb(ThumbInfo& info, const std::string& type, int w, int h
 static void readPhotoSizeVector(MTProto::TLReader& r, ThumbInfo& info) {
     int32_t vt = r.readInt32();
     if (vt != MTProto::TL::vector) return;
+
     int32_t count = r.readInt32();
     for (int i = 0; i < count; ++i) {
         int32_t tid = r.readInt32();
         if (tid == MTProto::TL::photoSize || tid == (int32_t)0x77bfb61bu || tid == (int32_t)0x77c01b79u) {
             std::string type = r.readString();
-            // Current schema: type, w, h, size. Some very old schemas had a
-            // FileLocation here; servers for custom emoji use the current one.
             int w = r.readInt32();
             int h = r.readInt32();
             int size = r.readInt32();
@@ -167,13 +203,29 @@ static void readPhotoSizeVector(MTProto::TLReader& r, ThumbInfo& info) {
             int h = r.readInt32();
             MTProto::Bytes bytes = r.readBytes();
             considerThumb(info, type, w, h, (int)bytes.size(), bytes);
+        } else if (tid == (int32_t)0xfa3efb95u) { // photoSizeProgressive
+            std::string type = r.readString();
+            int w = r.readInt32();
+            int h = r.readInt32();
+            int32_t vec = r.readInt32();
+            int size = 0;
+            if (vec == MTProto::TL::vector) {
+                int32_t n = r.readInt32();
+                for (int j = 0; j < n; ++j) size = std::max(size, r.readInt32());
+            }
+            considerThumb(info, type, w, h, size);
+        } else if (tid == (int32_t)0xd8214d41u) { // photoPathSize
+            r.readString();
+            r.readBytes();
         } else if (tid == (int32_t)0xe0b0bc2eu) { // photoStrippedSize
             r.readString();
             r.readBytes();
         } else if (tid == (int32_t)0x0e17e23cu || tid == (int32_t)0x111e5e11u) { // photoSizeEmpty variants
             r.readString();
         } else {
-            apiLog("[TgClient] Unknown PhotoSize constructor, stopping thumb parse");
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "[TgClient] Unknown PhotoSize constructor: 0x%08x", (unsigned)tid);
+            apiLog(buf);
             return;
         }
     }
@@ -185,13 +237,14 @@ static void skipVideoSizeVector(MTProto::TLReader& r) {
     int32_t count = r.readInt32();
     for (int i = 0; i < count; ++i) {
         int32_t tid = r.readInt32();
-        if (tid == (int32_t)0xde33b094u) { // videoSize flags:# type:string w:int h:int size:int video_start_ts:flags.0?double
+        if (tid == (int32_t)0xde33b094u) {
             int32_t flags = r.readInt32();
             r.readString();
-            r.readInt32(); r.readInt32(); r.readInt32();
+            r.readInt32();
+            r.readInt32();
+            r.readInt32();
             if (flags & 1) r.skip(8);
-        } else if (tid == (int32_t)0xf85c413cu || tid == (int32_t)0xda082feu) {
-            // videoSizeEmojiMarkup / videoSizeStickerMarkup. Not needed for file download.
+        } else if (tid == (int32_t)0xf85c413cu || tid == (int32_t)0x0da082feu) {
             return;
         } else {
             return;
@@ -200,133 +253,151 @@ static void skipVideoSizeVector(MTProto::TLReader& r) {
 }
 
 std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
-    // Fast/reliable path: Bot API exposes custom emoji stickers and their
-    // static thumbnails, avoiding DC migration and animated WEBM/TGS issues.
-    if (std::string botPath = fetchCustomEmojiViaBotApi(emojiId); !botPath.empty()) {
-        return botPath;
-    }
-
-    if (!m_mtproto.is_connected()) {
-        std::cerr << "[TgClient] Error: Not connected" << std::endl;
+    uint64_t eid = 0;
+    try {
+        eid = std::stoull(emojiId);
+    } catch (...) {
+        apiLog("[TgClient] Invalid emoji id: " + emojiId);
         return "";
     }
 
-    uint64_t eid = 0;
-    try { eid = std::stoull(emojiId); }
-    catch (...) { apiLog("[TgClient] Invalid emoji id: " + emojiId); return ""; }
-
-    
     std::string cacheDir = "emoji_cache";
     mkdir(cacheDir.c_str(), 0777);
-    
-    for (const char* ext : {".png", ".webp.png", ".jpg.png", ".tgs.png", ".webm.png", ".cached.png", ".webp", ".jpg", ".tgs", ".webm", ".cached"}) {
+    for (const char* ext : {".png", ".webp.png", ".jpg.png", ".tgs.png", ".webm.png", ".cached.png", ".webp", ".jpg", ".tgs", ".webm", ".cached", "_botapi.webp", "_botapi.png", "_botapi.jpg", "_botapi.tgs", "_botapi.webm"}) {
         std::string p = cacheDir + "/emoji_" + emojiId + ext;
         if (fileExists(p)) return p;
     }
 
-
-    std::cout << "[TgClient] Fetching doc for emoji: " << eid << std::endl;
-
-    // 1. messages.getCustomEmojiDocuments#d9ab0f54 document_id:Vector<long>
-    MTProto::TLWriter w;
-    w.writeInt32(MTProto::TL::messages_getCustomEmojiDocuments);
-    w.writeInt32(MTProto::TL::vector);
-    w.writeInt32(1);
-    w.writeInt64((int64_t)eid);
-
-    auto res = m_mtproto.invoke(w.data());
-    if (!res.ok) {
-        apiLog("[TgClient] RPC failed for getCustomEmojiDocuments: " + std::to_string(res.error_code) + " " + res.error_message);
-        return fetchCustomEmojiViaBotApi(emojiId);
-    }
-
-    MTProto::TLReader r(res.payload);
-    int32_t vecType = r.readInt32();
-    if (vecType != MTProto::TL::vector) {
-        apiLog("[TgClient] Expected vector for getCustomEmojiDocuments result");
-        return "";
-    }
-    int32_t count = r.readInt32();
-    if (count <= 0) {
-        apiLog("[TgClient] No documents returned for emojiId");
+    if (wasRecentFailure(emojiId)) {
+        apiLog("[TgClient] Skipping recent failed emoji lookup: " + emojiId);
         return "";
     }
 
-    int32_t docType = r.readInt32();
-    if (docType != MTProto::TL::document && docType != (int32_t)0x8fdccffau) {
-        apiLog("[TgClient] Expected document constructor");
-        return "";
-    }
+    auto fetchViaMtproto = [&]() -> std::string {
+        if (!m_mtproto.is_connected()) return "";
 
-    int32_t flags = r.readInt32();
-    int64_t doc_id          = r.readInt64();
-    int64_t doc_access_hash = r.readInt64();
-    MTProto::Bytes doc_file_ref = r.readBytes();
-    r.readInt32(); // date
-    std::string mime = r.readString();
-    r.readInt64(); // size (long in current TL schema)
+        std::cout << "[TgClient] Fetching doc for emoji: " << eid << std::endl;
 
-    apiLog("[TgClient] Found Document ID: " + std::to_string(doc_id) + " mime=" + mime);
+        MTProto::TLWriter w;
+        w.writeInt32(MTProto::TL::messages_getCustomEmojiDocuments);
+        w.writeInt32(MTProto::TL::vector);
+        w.writeInt32(1);
+        w.writeInt64((int64_t)eid);
 
-    ThumbInfo thumb;
-    if (flags & 1) readPhotoSizeVector(r, thumb);
-    if (flags & 2) skipVideoSizeVector(r);
-    if (!r.atEnd()) r.readInt32(); // dc_id; attributes follow but are not needed
-
-    // Prefer Telegram's static thumbnail for animated/video custom emoji. Cairo
-    // cannot draw TGS/WEBM directly, while thumbnails are small WEBP/JPEG/PNG.
-    std::string thumbSize = thumb.bestType;
-    if (!thumb.cachedBytes.empty()) {
-        std::string cached = saveBytes(cacheDir + "/emoji_" + emojiId + "_cached", thumb.cachedBytes);
-        if (!cached.empty()) {
-            apiLog("[TgClient] Using cached thumb bytes: " + cached);
-            return cached;
-        }
-    }
-
-    auto download = [&](const std::string& requestedThumb) -> std::string {
-        MTProto::TLWriter fw;
-        // upload.getFile#be5335be flags:# precise:flags.0?true cdn_supported:flags.1?true
-        // location:InputFileLocation offset:long limit:int = upload.File
-        fw.writeInt32(MTProto::TL::upload_getFile);
-        fw.writeInt32(0); // flags
-        fw.writeInt32(MTProto::TL::inputDocumentFileLocation);
-        fw.writeInt64(doc_id);
-        fw.writeInt64(doc_access_hash);
-        fw.writeBytes(doc_file_ref);
-        fw.writeString(requestedThumb); // empty = full file, otherwise document thumbnail type
-        fw.writeInt64(0); // offset
-        fw.writeInt32(1024 * 1024); // limit
-
-        auto fres = m_mtproto.invoke(fw.data());
-        if (!fres.ok) { apiLog("[TgClient] upload.getFile failed: " + std::to_string(fres.error_code) + " " + fres.error_message); return fetchCustomEmojiViaBotApi(emojiId); }
-        MTProto::TLReader fr(fres.payload);
-        int32_t ftype = fr.readInt32();
-        if (ftype != MTProto::TL::upload_file) {
-            apiLog("[TgClient] upload.getFile returned non-file result");
+        auto res = m_mtproto.invoke(w.data(), 8000);
+        if (!res.ok) {
+            apiLog("[TgClient] RPC failed for getCustomEmojiDocuments: " + std::to_string(res.error_code) + " " + res.error_message);
             return "";
         }
-        fr.readInt32(); // storage.FileType
-        fr.readInt32(); // mtime
-        MTProto::Bytes b = fr.readBytes();
-        apiLog("[TgClient] Downloaded " + std::to_string(b.size()) + " bytes" + (requestedThumb.empty() ? "" : " thumb=" + requestedThumb));
-        return saveBytes(cacheDir + "/emoji_" + emojiId + (requestedThumb.empty() ? "" : "_thumb_" + requestedThumb), b, requestedThumb.empty() ? mime : "");
+
+        MTProto::TLReader r(res.payload);
+        int32_t vecType = r.readInt32();
+        if (vecType != MTProto::TL::vector) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "[TgClient] Expected vector for getCustomEmojiDocuments result, got 0x%08x", (unsigned)vecType);
+            apiLog(buf);
+            return "";
+        }
+
+        int32_t count = r.readInt32();
+        if (count <= 0) {
+            apiLog("[TgClient] No documents returned for emojiId");
+            return "";
+        }
+
+        int32_t docType = r.readInt32();
+        if (docType != MTProto::TL::document && docType != (int32_t)0x8fdccffau) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "[TgClient] Expected document constructor, got 0x%08x", (unsigned)docType);
+            apiLog(buf);
+            return "";
+        }
+
+        int32_t flags = r.readInt32();
+        int64_t doc_id = r.readInt64();
+        int64_t doc_access_hash = r.readInt64();
+        MTProto::Bytes doc_file_ref = r.readBytes();
+        r.readInt32();
+        std::string mime = r.readString();
+        r.readInt64();
+
+        apiLog("[TgClient] Found Document ID: " + std::to_string(doc_id) + " mime=" + mime);
+
+        ThumbInfo thumb;
+        if (flags & 1) readPhotoSizeVector(r, thumb);
+        if (flags & 2) skipVideoSizeVector(r);
+        if (!r.atEnd()) r.readInt32();
+
+        if (!thumb.cachedBytes.empty()) {
+            std::string cached = saveBytes(cacheDir + "/emoji_" + emojiId + "_cached", thumb.cachedBytes);
+            if (!cached.empty()) {
+                apiLog("[TgClient] Using cached thumb bytes: " + cached);
+                return cached;
+            }
+        }
+
+        auto download = [&](const std::string& requestedThumb) -> std::string {
+            MTProto::TLWriter fw;
+            fw.writeInt32(MTProto::TL::upload_getFile);
+            fw.writeInt32(0);
+            fw.writeInt32(MTProto::TL::inputDocumentFileLocation);
+            fw.writeInt64(doc_id);
+            fw.writeInt64(doc_access_hash);
+            fw.writeBytes(doc_file_ref);
+            fw.writeString(requestedThumb);
+            fw.writeInt64(0);
+            fw.writeInt32(1024 * 1024);
+
+            auto fres = m_mtproto.invoke(fw.data(), 10000);
+            if (!fres.ok) {
+                apiLog("[TgClient] upload.getFile failed: " + std::to_string(fres.error_code) + " " + fres.error_message);
+                return "";
+            }
+
+            MTProto::TLReader fr(fres.payload);
+            int32_t ftype = fr.readInt32();
+            if (ftype != MTProto::TL::upload_file) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "[TgClient] upload.getFile returned non-file result: 0x%08x", (unsigned)ftype);
+                apiLog(buf);
+                return "";
+            }
+
+            fr.readInt32();
+            fr.readInt32();
+            MTProto::Bytes b = fr.readBytes();
+            apiLog("[TgClient] Downloaded " + std::to_string(b.size()) + " bytes" + (requestedThumb.empty() ? "" : " thumb=" + requestedThumb));
+            return saveBytes(cacheDir + "/emoji_" + emojiId + (requestedThumb.empty() ? "" : "_thumb_" + requestedThumb), b, requestedThumb.empty() ? mime : "");
+        };
+
+        std::string path;
+        if (!thumb.bestType.empty()) {
+            apiLog("[TgClient] Downloading emoji thumbnail: " + thumb.bestType);
+            path = download(thumb.bestType);
+        }
+        if (path.empty()) {
+            apiLog("[TgClient] Downloading full emoji document");
+            path = download("");
+        }
+        return path;
     };
 
-    std::string path;
-    if (!thumbSize.empty()) {
-        apiLog("[TgClient] Downloading emoji thumbnail: " + thumbSize);
-        path = download(thumbSize);
+    if (std::string mtprotoPath = fetchViaMtproto(); !mtprotoPath.empty()) {
+        clearFailure(emojiId);
+        return mtprotoPath;
     }
-    if (path.empty()) {
-        apiLog("[TgClient] Downloading full emoji document");
-        path = download("");
+
+    if (std::string botPath = fetchCustomEmojiViaBotApi(emojiId); !botPath.empty()) {
+        clearFailure(emojiId);
+        return botPath;
     }
-    return path;
+
+    rememberFailure(emojiId);
+    return "";
 }
 
 std::string TgClient::fetchAvatar(const std::string& userId) {
-    // Stub: Logic to call photos.getUserPhotos via MTProto
+    (void)userId;
     return "";
 }
 

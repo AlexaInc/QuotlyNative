@@ -54,9 +54,10 @@ void Transport::connect(int dc_id) {
         throw std::runtime_error(std::string("socket: ") + strerror(errno));
     }
 
-    struct timeval tv{ 30, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct timeval rcv_tv{ 5, 0 };
+    struct timeval snd_tv{ 30, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof(rcv_tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv));
 
     if (::connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
         ::close(fd);
@@ -90,11 +91,19 @@ void Transport::recv_raw(uint8_t* buf, size_t len) {
     size_t got = 0;
     while (got < len) {
         ssize_t n = ::recv(m_impl->fd, buf + got, len - got, MSG_WAITALL);
-        if (n <= 0) {
-            m_connected = false;
-            throw std::runtime_error(std::string("recv failed: ") + strerror(errno));
+        if (n > 0) {
+            got += n;
+            continue;
         }
-        got += n;
+        if (n == 0) {
+            m_connected = false;
+            throw std::runtime_error("recv failed: connection closed");
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+            throw TransportTimeoutError(std::string("recv timeout: ") + strerror(errno));
+        }
+        m_connected = false;
+        throw std::runtime_error(std::string("recv failed: ") + strerror(errno));
     }
 }
 

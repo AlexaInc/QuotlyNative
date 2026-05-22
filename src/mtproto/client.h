@@ -66,7 +66,10 @@ private:
 
     std::atomic<bool> m_connected  { false };
     std::atomic<bool> m_stopping   { false };
+    std::atomic<bool> m_reconnect_scheduled { false };
     int               m_backoff_s  = 1;      // exponential backoff
+
+    std::mutex                               m_send_mutex;
 
     // ── Pending RPC calls: msg_id → promise ───────────────────────────────────
     std::mutex                               m_pending_mutex;

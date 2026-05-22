@@ -9,6 +9,7 @@
 #include <iostream>
 #include <filesystem>
 #include <map>
+#include <mutex>
 #include <fstream>
 #include <vector>
 #include <cstdlib>
@@ -20,6 +21,7 @@ namespace fs = std::filesystem;
 namespace Quote {
 static std::string g_apiLogs;
 static std::mutex g_logMutex;
+static std::shared_ptr<TgClient> g_tgClient;
 
 void apiLog(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_logMutex);
@@ -102,6 +104,10 @@ static std::string saveBase64ToTemp(const std::string& b64Data, const std::strin
     std::ofstream ofs(path, std::ios::binary);
     ofs.write(decoded.data(), decoded.size());
     return path;
+}
+
+void ApiHandler::setTgClient(const std::shared_ptr<TgClient>& tgClient) {
+    g_tgClient = tgClient;
 }
 
 void ApiHandler::setupRoutes(crow::SimpleApp& app) {
@@ -235,25 +241,13 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
 
         // ── Pre-fetch Premium Emojis ─────────────────────────────────────────
         std::map<uint64_t, std::string> emojiMap;
-        // Static TgClient initialized from env vars (reused across requests)
-        static TgClient s_tgClient(
-            std::atoi(std::getenv("TG_API_ID") ? std::getenv("TG_API_ID") : "0"),
-            std::getenv("TG_API_HASH") ? std::getenv("TG_API_HASH") : ""
-        );
-        static bool s_tgConnected = [&](){
-            const char* tok = std::getenv("BOT_TOKEN");
-            if (!tok || !*tok) return false;
-            bool mtprotoOk = s_tgClient.authenticate(tok);
-            if (!mtprotoOk) apiLog("[QuoteAPI] MTProto auth failed; Bot API emoji fallback enabled.");
-            return true;
-        }();
 
-        if (s_tgConnected) {
+        if (g_tgClient) {
             apiLog("[QuoteAPI] handleQuoteRequest " + std::to_string(msgs.size()) + " messages");
             for (const auto& m : msgs) {
                 if (m.emojiStatusId != 0 && emojiMap.find(m.emojiStatusId) == emojiMap.end()) {
                     apiLog("[QuoteAPI] Fetching status emoji: " + std::to_string(m.emojiStatusId));
-                    std::string path = s_tgClient.fetchCustomEmoji(std::to_string(m.emojiStatusId));
+                    std::string path = g_tgClient->fetchCustomEmoji(std::to_string(m.emojiStatusId));
                     if (!path.empty()) {
                         apiLog("[QuoteAPI] Success: " + path);
                         emojiMap[m.emojiStatusId] = path;
@@ -264,7 +258,7 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                 for (const auto& ce : m.customEmojis) {
                     if (emojiMap.find(ce.documentId) == emojiMap.end()) {
                         apiLog("[QuoteAPI] Fetching inline emoji: " + std::to_string(ce.documentId));
-                        std::string path = s_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
+                        std::string path = g_tgClient->fetchCustomEmoji(std::to_string(ce.documentId));
                         if (!path.empty()) {
                             apiLog("[QuoteAPI] Success: " + path);
                             emojiMap[ce.documentId] = path;
@@ -276,7 +270,7 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                 for (const auto& ce : m.reply.customEmojis) {
                     if (emojiMap.find(ce.documentId) == emojiMap.end()) {
                         apiLog("[QuoteAPI] Fetching reply inline emoji: " + std::to_string(ce.documentId));
-                        std::string path = s_tgClient.fetchCustomEmoji(std::to_string(ce.documentId));
+                        std::string path = g_tgClient->fetchCustomEmoji(std::to_string(ce.documentId));
                         if (!path.empty()) {
                             emojiMap[ce.documentId] = path;
                         }
@@ -284,7 +278,7 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                 }
             }
         } else {
-            apiLog("[QuoteAPI] ⚠️ MTProto NOT Connected. Skipping emojis.");
+            apiLog("[QuoteAPI] ⚠️ Telegram client not configured. Premium emoji fetching disabled.");
         }
 
         RenderOptions options;

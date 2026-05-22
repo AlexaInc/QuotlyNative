@@ -145,6 +145,7 @@ int main(int argc, char** argv) {
 
     if (creds_ok) {
         tgClient = std::make_shared<Quote::TgClient>(apiId, apiHash);
+        Quote::ApiHandler::setTgClient(tgClient);
         if (!botToken.empty()) {
             std::cout << "🔌 Attempting MTProto handshake + bot auth..." << std::endl;
             std::cout.flush();

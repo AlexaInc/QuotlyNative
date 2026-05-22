@@ -16,6 +16,7 @@ public:
     ~TgClient();
 
     bool authenticate(const std::string& botToken);
+    bool isConnected() const { return m_mtproto.is_connected(); }
     
     // Fetch custom emoji as a local file path or buffer
     std::string fetchCustomEmoji(const std::string& emojiId);
