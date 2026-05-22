@@ -76,32 +76,30 @@ static void derive_tmp_aes(
     Bytes& aes_key, Bytes& aes_iv)
 {
     using namespace Crypto;
-    // Spec: nn(32), sn(16)
-    Bytes nn = new_nonce; if (nn.size() > 32) nn.resize(32);
-    if (nn.size() < 32) { Bytes b(32,0); std::memcpy(b.data(), nn.data(), nn.size()); nn=b; }
-    Bytes sn = server_nonce; if (sn.size() > 16) sn.resize(16);
-    if (sn.size() < 16) { Bytes b(16,0); std::memcpy(b.data(), sn.data(), sn.size()); sn=b; }
+    // MTProto 1.0 Key Derivation for initial Handshake
+    // tmp_aes_key = SHA1(new_nonce + server_nonce) + substr(SHA1(server_nonce + new_nonce), 0, 12)
+    // tmp_aes_iv = substr(SHA1(server_nonce + new_nonce), 12, 8) + SHA1(new_nonce + new_nonce) + substr(new_nonce, 0, 4)
 
-    // SHA1(new_nonce + server_nonce)
+    Bytes nn = new_nonce; if (nn.size() > 32) nn.resize(32);
+    Bytes sn = server_nonce; if (sn.size() > 16) sn.resize(16);
+
     Bytes h1_input; h1_input.insert(h1_input.end(), nn.begin(), nn.end()); h1_input.insert(h1_input.end(), sn.begin(), sn.end());
     Bytes h1 = sha1(h1_input);
 
-    // SHA1(server_nonce + new_nonce)
     Bytes h2_input; h2_input.insert(h2_input.end(), sn.begin(), sn.end()); h2_input.insert(h2_input.end(), nn.begin(), nn.end());
     Bytes h2 = sha1(h2_input);
 
-    // SHA1(new_nonce + new_nonce)
     Bytes h3_input; h3_input.insert(h3_input.end(), nn.begin(), nn.end()); h3_input.insert(h3_input.end(), nn.begin(), nn.end());
     Bytes h3 = sha1(h3_input);
 
     aes_key.clear();
-    aes_key.insert(aes_key.end(), h1.begin(), h1.end());         // 20
-    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);  // 12
+    aes_key.insert(aes_key.end(), h1.begin(), h1.end());
+    aes_key.insert(aes_key.end(), h2.begin(), h2.begin() + 12);
 
     aes_iv.clear();
-    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());      // 8
-    aes_iv.insert(aes_iv.end(), h3.begin(),       h3.end());     // 20
-    aes_iv.insert(aes_iv.end(), nn.begin(),        nn.begin() + 4); // 4
+    aes_iv.insert(aes_iv.end(), h2.begin() + 12, h2.end());
+    aes_iv.insert(aes_iv.end(), h3.begin(), h3.end());
+    aes_iv.insert(aes_iv.end(), nn.begin(), nn.begin() + 4);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

@@ -16,6 +16,14 @@
       "id": 100
     },
     {
+      "firstName": "asda",
+      "nameColorId": 2,
+      "message": "",
+      "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABACAYAAABfU79XAAAAVklEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMcgAAB9067mAAAAABJRU5ErkJggg==",
+      "mediaType": "sticker",
+      "id": 100
+    },
+    {
       "firstName": "Developer",
       "nameColorId": 5,
       "message": "Wide test (Landscape):",
@@ -24,7 +32,7 @@
     {
       "firstName": "Developer",
       "nameColorId": 5,
-      "message": "",
+      "message": "here is captions of image ",
       "mediaBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABACAYAAABfU79XAAAAX0lEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABvBgwAAfk6PaMAAAAASUVORK5CYII=",
       "mediaType": "photo",
       "id": 200

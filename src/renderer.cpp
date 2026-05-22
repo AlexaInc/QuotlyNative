@@ -282,7 +282,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
                     ? photoH
                     : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom;
         sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW, false});
-        totalH += msgH + 8; // Uniform inter-bubble gap
+        totalH += msgH + 12; // Standard inter-bubble gap (12px)
         g_object_unref(tl); pango_font_description_free(td);
     }
 
@@ -308,11 +308,11 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
                 double avatarY = curY + sz.h - kAvatarSize;
                 drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
             }
-            // Draw sticker thumbnail (placeholder with rounded corners)
+            double sh = sz.photoH;
+            double sw = (sh * isz.w / isz.h);
+            const_cast<double&>(sz.bubbleW) = sw; // update measured width
             double sx = bubbleX;
             double sy = curY + 4;
-            double sw = kStickerSize;
-            double sh = kStickerSize;
             double sr = 8;
             // Rounded rect clip for sticker
             cairo_new_path(cr);
@@ -323,18 +323,18 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             cairo_close_path(cr);
             cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.6);
             cairo_fill(cr);
-            // Sticker emoji placeholder text
+            // Sticker icon placeholder
             PangoLayout* sl = pango_cairo_create_layout(cr);
             PangoFontDescription* sd = pango_font_description_from_string("Inter 40");
             pango_layout_set_font_description(sl, sd);
-            pango_layout_set_text(sl, "\xF0\x9F\x96\xBC", -1); // 🖼 placeholder
+            pango_layout_set_text(sl, "\xF0\x9F\x96\xBC", -1);
             int stw, sth; pango_layout_get_pixel_size(sl, &stw, &sth);
             cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
             cairo_move_to(cr, sx + (sw - stw)/2, sy + (sh - sth)/2);
             pango_cairo_show_layout(cr, sl);
             g_object_unref(sl); pango_font_description_free(sd);
 
-            curY += sz.h + 8;
+            curY += sz.h + 12;
             continue;
         }
 
@@ -358,7 +358,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             mOpts.rounding.bottomLeft = (lastInGroup[i]) ? CornerRounding::Tail : CornerRounding::Small;
             mOpts.rounding.bottomRight = CornerRounding::Large;
 
-            drawBubble(cr, bubbleX, curY, maxW, sz.h, mOpts);
+            drawBubble(cr, bubbleX, curY, sz.bubbleW, sz.h, mOpts);
         }
 
         if (lastInGroup[i]) {
@@ -381,7 +381,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
 
         if (msg.reply.hasReply) {
              // ...
-            drawReply(cr, bubbleX + kPadLeft, py, maxW - kPadLeft - kPadRight, msg.reply);
+            drawReply(cr, bubbleX + kPadLeft, py, sz.bubbleW - kPadLeft - kPadRight, msg.reply);
             py += sz.replyH;
         }
 
@@ -394,7 +394,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             if (isz.w > 0 && isz.h > 0) ratio = (double)isz.w / isz.h;
             double pw = ph * ratio;
 
-            double px = barePhotoRender ? bubbleX : bubbleX + (maxW - kPadLeft - kPadRight - pw)/2 + kPadLeft;
+            double px = barePhotoRender ? bubbleX : bubbleX + (sz.bubbleW - kPadLeft - kPadRight - pw)/2 + kPadLeft;
             if (!barePhotoRender) px = bubbleX + kPadLeft; // align left if in bubble
             // Rounded rect with thin border
             cairo_new_path(cr);
@@ -426,7 +426,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             PangoLayout* tl = pango_cairo_create_layout(cr);
             PangoFontDescription* td = pango_font_description_from_string("Inter 14");
             pango_layout_set_font_description(tl, td);
-            pango_layout_set_width(tl, (maxW - kPadLeft - kPadRight) * PANGO_SCALE);
+            pango_layout_set_width(tl, (sz.bubbleW - kPadLeft - kPadRight) * PANGO_SCALE);
             if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
             else pango_layout_set_text(tl, msg.text.c_str(), -1);
             cairo_set_source_rgb(cr, 1, 1, 1);
@@ -435,7 +435,7 @@ void Renderer::renderQuote(const std::string& outputFile, const std::vector<Mess
             g_object_unref(tl); pango_font_description_free(td);
         }
 
-        curY += sz.h + 8;
+        curY += sz.h + 12;
     }
 
     cairo_surface_write_to_png(surface, outputFile.c_str());
