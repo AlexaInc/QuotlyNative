@@ -93,6 +93,29 @@ static ImageSize getImageSize(const std::string& path) {
     return res;
 }
 
+static void fitMediaIntoBounds(const ImageSize& isz, double maxW, double maxH,
+                               double minW, double fallbackW, double fallbackH,
+                               double& outW, double& outH) {
+    if (isz.w <= 0 || isz.h <= 0) {
+        outW = fallbackW;
+        outH = fallbackH;
+        return;
+    }
+
+    double scale = std::min(maxW / isz.w, maxH / isz.h);
+    outW = std::max(1.0, isz.w * scale);
+    outH = std::max(1.0, isz.h * scale);
+
+    if (outW < minW) {
+        double minScale = minW / isz.w;
+        double candidateH = isz.h * minScale;
+        if (candidateH <= maxH) {
+            outW = minW;
+            outH = candidateH;
+        }
+    }
+}
+
 static const std::string& nameColor(int userId) {
     using namespace Style;
     return kNameColors[std::abs(userId) % kNameColors.size()];
@@ -258,14 +281,28 @@ void Renderer::renderQuote(
     cairo_t* measure_cr = cairo_create(measure_surf);
     int maxTextWidth = (int)(kMsgMaxWidth - kPadLeft - kPadRight);
 
-    // Sticker constants
-    constexpr double kStickerSize = 160; // medium thumbnail
-    constexpr double kPhotoMaxW   = 280; // photo inside bubble
-    constexpr double kPhotoMaxH   = 280;
+    // Portrait media is the common case for quotes. Avoid squeezing tall images
+    // into a square box, otherwise the bubble becomes too thin and the media
+    // looks visually misplaced compared with Telegram-style quote cards.
+    constexpr double kStickerMaxW  = 170;
+    constexpr double kStickerMaxH  = 300;
+    constexpr double kStickerMinW  = 140;
+    constexpr double kPhotoMaxW    = 200;
+    constexpr double kPhotoMaxH    = 380;
+    constexpr double kPhotoMinW    = 170;
     constexpr double kPhotoBorderR = 12; // thin border radius
     constexpr double kPhotoBorder  = 2;  // border thickness
 
-    struct MsgSize { double h; double textH; double nameH; double replyH; double photoH; double bubbleW; bool isSticker; };
+    struct MsgSize {
+        double h;
+        double textH;
+        double nameH;
+        double replyH;
+        double mediaW;
+        double mediaH;
+        double bubbleW;
+        bool isSticker;
+    };
     std::vector<MsgSize> sizes;
     double totalH = 0;
     double maxW = kMsgMinWidth;
@@ -284,12 +321,10 @@ void Renderer::renderQuote(
 
         if (isSticker) {
             ImageSize isz = getImageSize(msg.photoPath);
-            double sw = kStickerSize, sh = kStickerSize;
-            if (isz.w > 0 && isz.h > 0) {
-                double r = (double)isz.w / isz.h;
-                if (r > 1.0) sh = sw / r; else sw = sh * r;
-            }
-            sizes.push_back({sh + 8, 0, 0, 0, sh, sw, true});
+            double sw = 0, sh = 0;
+            fitMediaIntoBounds(isz, kStickerMaxW, kStickerMaxH, kStickerMinW,
+                               kStickerMaxW, kStickerMaxH, sw, sh);
+            sizes.push_back({sh + 8, 0, 0, 0, sw, sh, sw, true});
             maxW = std::max(maxW, sw + kPadLeft + kPadRight);
             totalH += (sh + 8) + 8; // inter-message gap
             continue;
@@ -327,18 +362,8 @@ void Renderer::renderQuote(
         bool barePHoto = isPhoto && !msg.photoPath.empty() && !hasText;
         if (isPhoto && !msg.photoPath.empty()) {
             ImageSize isz = getImageSize(msg.photoPath);
-            if (isz.w > 0 && isz.h > 0) {
-                double ratio = (double)isz.w / isz.h;
-                if (ratio > (kPhotoMaxW / kPhotoMaxH)) {
-                    photoW = kPhotoMaxW;
-                    photoH = kPhotoMaxW / ratio;
-                } else {
-                    photoH = kPhotoMaxH;
-                    photoW = kPhotoMaxH * ratio;
-                }
-            } else {
-                photoW = kPhotoMaxW; photoH = kPhotoMaxH;
-            }
+            fitMediaIntoBounds(isz, kPhotoMaxW, kPhotoMaxH, kPhotoMinW,
+                               kPhotoMaxW, kPhotoMaxH, photoW, photoH);
         }
 
         double contentW = (double)tw;
@@ -355,7 +380,7 @@ void Renderer::renderQuote(
         double msgH = barePHoto
                     ? photoH
                     : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom;
-        sizes.push_back({msgH, (double)th, nameH, replyH, photoH, msgW, false});
+        sizes.push_back({msgH, (double)th, nameH, replyH, photoW, photoH, msgW, false});
         totalH += msgH + 12; // Standard inter-bubble gap (12px)
         g_object_unref(tl); pango_font_description_free(td);
     }
@@ -395,10 +420,8 @@ void Renderer::renderQuote(
                 drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
             }
 
-            double sh = sz.photoH;
-            ImageSize isz = getImageSize(msg.photoPath);
-            double sw = (isz.h > 0) ? (sh * isz.w / (double)isz.h) : sh;
-            const_cast<double&>(sz.bubbleW) = sw;
+            double sw = sz.mediaW;
+            double sh = sz.mediaH;
             double sx = bubbleX;
             double sy = curY + 4;
             double sr = 8;
@@ -499,10 +522,8 @@ void Renderer::renderQuote(
         // ── PHOTO inside bubble with thin rounded border ──────────────────
         if (msg.mediaType == MediaType::Photo && !msg.photoPath.empty()) {
             bool barePhotoRender = !hasText;
-            double ph = sz.photoH;
-            ImageSize isz = getImageSize(msg.photoPath);
-            double ratio = (isz.w > 0 && isz.h > 0) ? (double)isz.w / isz.h : 1.0;
-            double pw = ph * ratio;
+            double pw = sz.mediaW;
+            double ph = sz.mediaH;
 
             double px = barePhotoRender ? bubbleX : bubbleX + kPadLeft;
             cairo_new_path(cr);
@@ -531,7 +552,7 @@ void Renderer::renderQuote(
                 cairo_stroke(cr);
             }
             cairo_surface_destroy(image);
-            py += sz.photoH + (barePhotoRender ? 0 : 8);
+            py += sz.mediaH + (barePhotoRender ? 0 : 8);
         }
 
         // ── Text with Inline Emojis ───────────────────────────────────────
