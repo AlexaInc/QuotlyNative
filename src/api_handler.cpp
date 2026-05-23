@@ -6,6 +6,8 @@
 #include "text_engine.h"
 #include "tg_client.h"
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <filesystem>
 #include <map>
@@ -49,6 +51,29 @@ static std::string base64Decode(const std::string& in) {
     return out;
 }
 
+
+static std::string detectDataUriExtension(const std::string& in) {
+    if (in.rfind("data:", 0) != 0) return ".bin";
+    size_t semi = in.find(';');
+    if (semi == std::string::npos) return ".bin";
+    std::string mime = in.substr(5, semi - 5);
+    if (mime == "image/png") return ".png";
+    if (mime == "image/jpeg" || mime == "image/jpg") return ".jpg";
+    if (mime == "image/webp") return ".webp";
+    if (mime == "image/gif") return ".gif";
+    if (mime == "video/webm") return ".webm";
+    if (mime == "application/x-tgsticker") return ".tgs";
+    return ".bin";
+}
+
+static MediaType parseMediaType(const nlohmann::json& item) {
+    std::string mediaType = item.value("mediaType", item.value("media_type", ""));
+    std::transform(mediaType.begin(), mediaType.end(), mediaType.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    if (mediaType == "photo" || mediaType == "image") return MediaType::Photo;
+    if (mediaType == "sticker") return MediaType::Sticker;
+    return MediaType::None;
+}
 
 static uint64_t parseUInt64Json(const nlohmann::json& obj, const std::string& key, uint64_t fallback = 0) {
     if (!obj.contains(key) || obj[key].is_null()) return fallback;
@@ -100,7 +125,8 @@ static std::string saveBase64ToTemp(const std::string& b64Data, const std::strin
     std::string decoded = base64Decode(actualData);
     if (decoded.empty()) return "";
 
-    std::string path = "/tmp/" + prefix + "_" + std::to_string(time(NULL)) + "_" + std::to_string(rand()) + ".png";
+    std::string ext = detectDataUriExtension(b64Data);
+    std::string path = "/tmp/" + prefix + "_" + std::to_string(time(NULL)) + "_" + std::to_string(rand()) + ext;
     std::ofstream ofs(path, std::ios::binary);
     ofs.write(decoded.data(), decoded.size());
     return path;
@@ -211,6 +237,10 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
             }
             if (item.contains("mediaBase64")) {
                 msg.photoPath = saveBase64ToTemp(item.value("mediaBase64", ""), "media");
+                msg.mediaType = parseMediaType(item);
+                if (msg.mediaType == MediaType::None && !msg.photoPath.empty()) {
+                    msg.mediaType = MediaType::Photo;
+                }
                 if (!msg.photoPath.empty()) tempFiles.push_back(msg.photoPath);
             }
 

@@ -29,20 +29,49 @@ static RGBA hexToRGBA(const std::string& hex) {
 }
 
 struct ImageSize { int w=0, h=0; };
+
+static bool fileExists(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 && st.st_size > 0;
+}
+
+static bool endsWith(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
+}
+
+static std::string prepareDrawablePath(const std::string& path) {
+    if (path.empty()) return "";
+    if (endsWith(path, ".png")) return path;
+
+    std::string pngPath = path + ".png";
+    if (fileExists(pngPath)) return pngPath;
+
+    std::string cmd;
+    if (endsWith(path, ".webp")) {
+        cmd = "dwebp \"" + path + "\" -o \"" + pngPath + "\" >/dev/null 2>&1";
+    } else if (endsWith(path, ".jpg") || endsWith(path, ".jpeg") || endsWith(path, ".gif")) {
+        cmd = "(magick \"" + path + "\" \"" + pngPath + "\" || convert \"" + path + "\" \"" + pngPath + "\") >/dev/null 2>&1";
+    } else if (endsWith(path, ".webm") || endsWith(path, ".mp4") || endsWith(path, ".tgs")) {
+        cmd = "ffmpeg -y -i \"" + path + "\" -frames:v 1 \"" + pngPath + "\" >/dev/null 2>&1";
+    }
+
+    if (!cmd.empty()) system(cmd.c_str());
+    return fileExists(pngPath) ? pngPath : path;
+}
+
 static ImageSize getImageSize(const std::string& path) {
-    FILE* f = fopen(path.c_str(), "rb");
+    std::string drawable = prepareDrawablePath(path);
+    FILE* f = fopen(drawable.c_str(), "rb");
     if (!f) return {0,0};
     uint8_t buf[32];
     if (fread(buf, 1, 32, f) < 8) { fclose(f); return {0,0}; }
     ImageSize res = {0,0};
     if (buf[0]==0x89 && buf[1]=='P' && buf[2]=='N' && buf[3]=='G') {
-        // PNG
         fseek(f, 16, SEEK_SET);
         uint8_t d[8]; fread(d, 1, 8, f);
         res.w = (d[0]<<24)|(d[1]<<16)|(d[2]<<8)|d[3];
         res.h = (d[4]<<24)|(d[5]<<16)|(d[6]<<8)|d[7];
     } else if (buf[0]==0xFF && buf[1]==0xD8) {
-        // JPEG
         fseek(f, 2, SEEK_SET);
         while (true) {
             uint8_t marker[2]; if (fread(marker, 1, 2, f) < 2) break;
@@ -197,30 +226,7 @@ void Renderer::drawBubble(cairo_t* cr, double x, double y, double width, double 
 
 static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const std::string& path) {
     if (path.empty()) return;
-    std::string finalPath = path;
-    auto endsWith = [](const std::string& s, const std::string& suffix) {
-        return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
-    };
-
-    // Cairo loads PNG only. Telegram custom emojis are usually WEBP/TGS/WEBM
-    // documents, so convert non-PNG assets or downloaded thumbnails to PNG.
-    if (!endsWith(path, ".png")) {
-        std::string pngPath = path + ".png";
-        struct stat st; bool exists = (stat(pngPath.c_str(), &st) == 0);
-        if (!exists) {
-            std::string cmd;
-            if (endsWith(path, ".webp")) {
-                cmd = "dwebp \"" + path + "\" -o \"" + pngPath + "\" >/dev/null 2>&1";
-            } else if (endsWith(path, ".jpg") || endsWith(path, ".jpeg")) {
-                cmd = "(magick \"" + path + "\" \"" + pngPath + "\" || convert \"" + path + "\" \"" + pngPath + "\") >/dev/null 2>&1";
-            } else if (endsWith(path, ".webm") || endsWith(path, ".mp4") || endsWith(path, ".tgs")) {
-                cmd = "ffmpeg -y -i \"" + path + "\" -frames:v 1 \"" + pngPath + "\" >/dev/null 2>&1";
-            }
-            if (!cmd.empty()) system(cmd.c_str());
-            exists = (stat(pngPath.c_str(), &st) == 0);
-        }
-        if (exists) finalPath = pngPath;
-    }
+    std::string finalPath = prepareDrawablePath(path);
     cairo_surface_t* img = cairo_image_surface_create_from_png(finalPath.c_str());
     if (cairo_surface_status(img) == CAIRO_STATUS_SUCCESS) {
         double iw = cairo_image_surface_get_width(img);
@@ -388,32 +394,43 @@ void Renderer::renderQuote(
                 double avatarY = curY + sz.h - kAvatarSize;
                 drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
             }
+
             double sh = sz.photoH;
             ImageSize isz = getImageSize(msg.photoPath);
             double sw = (isz.h > 0) ? (sh * isz.w / (double)isz.h) : sh;
-            const_cast<double&>(sz.bubbleW) = sw; // update measured width
+            const_cast<double&>(sz.bubbleW) = sw;
             double sx = bubbleX;
             double sy = curY + 4;
             double sr = 8;
-            // Rounded rect clip for sticker
-            cairo_new_path(cr);
-            cairo_arc(cr, sx + sr, sy + sr, sr, M_PI, 3*M_PI/2);
-            cairo_arc(cr, sx + sw - sr, sy + sr, sr, 3*M_PI/2, 2*M_PI);
-            cairo_arc(cr, sx + sw - sr, sy + sh - sr, sr, 0, M_PI/2);
-            cairo_arc(cr, sx + sr, sy + sh - sr, sr, M_PI/2, M_PI);
-            cairo_close_path(cr);
-            cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.6);
-            cairo_fill(cr);
-            // Sticker icon placeholder
-            PangoLayout* sl = pango_cairo_create_layout(cr);
-            PangoFontDescription* sd = pango_font_description_from_string("Inter 40");
-            pango_layout_set_font_description(sl, sd);
-            pango_layout_set_text(sl, "\xF0\x9F\x96\xBC", -1);
-            int stw, sth; pango_layout_get_pixel_size(sl, &stw, &sth);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
-            cairo_move_to(cr, sx + (sw - stw)/2, sy + (sh - sth)/2);
-            pango_cairo_show_layout(cr, sl);
-            g_object_unref(sl); pango_font_description_free(sd);
+
+            std::string drawablePath = prepareDrawablePath(msg.photoPath);
+            cairo_surface_t* image = cairo_image_surface_create_from_png(drawablePath.c_str());
+            if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
+                cairo_new_path(cr);
+                cairo_arc(cr, sx + sr, sy + sr, sr, M_PI, 3*M_PI/2);
+                cairo_arc(cr, sx + sw - sr, sy + sr, sr, 3*M_PI/2, 2*M_PI);
+                cairo_arc(cr, sx + sw - sr, sy + sh - sr, sr, 0, M_PI/2);
+                cairo_arc(cr, sx + sr, sy + sh - sr, sr, M_PI/2, M_PI);
+                cairo_close_path(cr);
+                cairo_save(cr);
+                cairo_clip(cr);
+                cairo_translate(cr, sx, sy);
+                cairo_scale(cr, sw / cairo_image_surface_get_width(image),
+                                sh / cairo_image_surface_get_height(image));
+                cairo_set_source_surface(cr, image, 0, 0);
+                cairo_paint(cr);
+                cairo_restore(cr);
+            } else {
+                cairo_new_path(cr);
+                cairo_arc(cr, sx + sr, sy + sr, sr, M_PI, 3*M_PI/2);
+                cairo_arc(cr, sx + sw - sr, sy + sr, sr, 3*M_PI/2, 2*M_PI);
+                cairo_arc(cr, sx + sw - sr, sy + sh - sr, sr, 0, M_PI/2);
+                cairo_arc(cr, sx + sr, sy + sh - sr, sr, M_PI/2, M_PI);
+                cairo_close_path(cr);
+                cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.6);
+                cairo_fill(cr);
+            }
+            cairo_surface_destroy(image);
 
             curY += sz.h + 12;
             continue;
@@ -496,7 +513,8 @@ void Renderer::renderQuote(
             cairo_close_path(cr);
 
             // Draw actual image if available
-            cairo_surface_t* image = cairo_image_surface_create_from_png(msg.photoPath.c_str());
+            std::string drawablePath = prepareDrawablePath(msg.photoPath);
+            cairo_surface_t* image = cairo_image_surface_create_from_png(drawablePath.c_str());
             if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
                 cairo_save(cr); cairo_clip(cr);
                 cairo_translate(cr, px, py);
