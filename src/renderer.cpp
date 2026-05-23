@@ -530,7 +530,6 @@ void Renderer::renderQuote(
 
         int tw = 0, th = 0;
         bool hasText = !msg.text.empty() || !msg.pangoMarkup.empty();
-        if (hasText) measureLayout(tl, maxTextWidth, tw, th);
 
         double nameH = 0, nameW = 0;
         bool hasCaption = !msg.text.empty() || !msg.pangoMarkup.empty();
@@ -557,25 +556,35 @@ void Renderer::renderQuote(
             ImageSize isz = getImageSize(msg.photoPath);
             fitMediaIntoBounds(isz, kPhotoMaxW, kPhotoMaxH, kPhotoMinW,
                                kPhotoMaxW, kPhotoMaxH, photoW, photoH);
-            if (!barePHoto && isz.w > 0 && isz.h > 0) {
-                const double preferredW = std::clamp(std::max((double)tw, photoW), kPhotoMinW, kPhotoMaxW);
-                const double preferredH = preferredW * (double)isz.h / (double)isz.w;
-                if (preferredH <= kPhotoMaxH) {
-                    photoW = preferredW;
-                    photoH = preferredH;
-                }
+        }
+
+        if (hasText) {
+            // Telegram-style caption layout: when a photo has a caption, the
+            // caption wraps to the media width and the bubble is tied to the
+            // media instead of becoming much wider than the image. This avoids
+            // the off-centre photo / oversized bubble look.
+            int textMeasureW = maxTextWidth;
+            if (isPhoto && photoW > 0) {
+                textMeasureW = (int)std::max(1.0, photoW - kPadLeft - kPadRight);
             }
+            measureLayout(tl, textMeasureW, tw, th);
         }
 
         double contentW = (double)tw;
+        double msgW = 0;
         if (barePHoto) {
             contentW = photoW;
-        } else if (isPhoto) {
-            contentW = std::max(contentW, photoW);
+            msgW = photoW;
+        } else if (isPhoto && photoW > 0) {
+            // For captioned photos the media itself defines the bubble width;
+            // text/name/reply may widen it, but photo width is not padded
+            // twice. The image is centred later if name/reply is wider.
+            msgW = std::max({photoW, (double)tw + kPadLeft + kPadRight, nameW + kPadLeft + kPadRight,
+                             (double)(msg.reply.hasReply ? 150 : 0) + kPadLeft + kPadRight});
+        } else {
+            msgW = std::max({contentW, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
         }
-        double msgW = std::max({contentW, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
-        if (barePHoto) msgW = photoW; 
-        msgW = std::clamp(msgW, kMsgMinWidth, kMsgMaxWidth);
+        msgW = std::clamp(msgW, barePHoto ? 1.0 : kMsgMinWidth, kMsgMaxWidth);
         maxW = std::max(maxW, barePHoto ? 0.0 : msgW);
 
         double msgH = barePHoto
@@ -726,7 +735,9 @@ void Renderer::renderQuote(
             double pw = sz.mediaW;
             double ph = sz.mediaH;
 
-            double px = barePhotoRender ? bubbleX : bubbleX + kPadLeft;
+            double px = barePhotoRender
+                ? bubbleX
+                : bubbleX + std::max(0.0, (sz.bubbleW - pw) / 2.0);
             cairo_new_path(cr);
             cairo_arc(cr, px + kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, M_PI, 3*M_PI/2);
             cairo_arc(cr, px + pw - kPhotoBorderR, py + kPhotoBorderR, kPhotoBorderR, 3*M_PI/2, 2*M_PI);

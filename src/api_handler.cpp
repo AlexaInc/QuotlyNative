@@ -161,7 +161,7 @@ static bool runCwebpSticker(const std::string& inputPng,
                             int targetW,
                             int targetH,
                             const std::string& qualityArgs) {
-    std::string cmd = "cwebp -quiet " + qualityArgs + " -m 6 -metadata none";
+    std::string cmd = "cwebp -quiet " + qualityArgs + " -m 6 -mt -metadata none";
     if (targetW > 0 && targetH > 0) {
         cmd += " -resize " + std::to_string(targetW) + " " + std::to_string(targetH);
     }
@@ -190,7 +190,7 @@ static std::string makeTelegramStickerWebp(const std::string& inputPng, double r
     }
 
     std::string webpPath = inputPng + ".sticker.webp";
-    if (runCwebpSticker(inputPng, webpPath, targetW, targetH, "-lossless -q 100") &&
+    if (runCwebpSticker(inputPng, webpPath, targetW, targetH, "-lossless -exact -q 100") &&
         std::filesystem::file_size(webpPath) <= 512 * 1024) {
         return webpPath;
     }
@@ -200,7 +200,7 @@ static std::string makeTelegramStickerWebp(const std::string& inputPng, double r
     // the first lossless path.
     for (int q : {95, 90, 85, 80, 75, 65, 55, 45}) {
         std::filesystem::remove(webpPath);
-        if (runCwebpSticker(inputPng, webpPath, targetW, targetH, "-q " + std::to_string(q)) &&
+        if (runCwebpSticker(inputPng, webpPath, targetW, targetH, "-q " + std::to_string(q) + " -alpha_q 100 -sharp_yuv -af") &&
             std::filesystem::file_size(webpPath) <= 512 * 1024) {
             return webpPath;
         }
