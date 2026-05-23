@@ -132,8 +132,8 @@ Request body:
       "text": "Hello! Check out these premium emojis ✨🔥",
       "entities": [
         { "offset": 0,  "length": 5,  "type": "bold" },
-        { "offset": 37, "length": 1,  "type": "custom_emoji", "custom_emoji_id": "5210956306952758910" },
-        { "offset": 38, "length": 2,  "type": "custom_emoji", "custom_emoji_id": "5233605022419270727" }
+        { "offset": 38, "length": 1,  "type": "custom_emoji", "custom_emoji_id": "5210956306952758910" },
+        { "offset": 39, "length": 2,  "type": "custom_emoji", "custom_emoji_id": "5233605022419270727" }
       ],
       "from": {
         "id": 8749605964,
