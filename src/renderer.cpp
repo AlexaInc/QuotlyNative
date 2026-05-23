@@ -280,10 +280,50 @@ void Renderer::measureLayout(PangoLayout* layout, int maxWidth, int& outWidth, i
 }
 
 // ── drawAvatar ────────────────────────────────────────────────────────────────
+//
+// When `avatarPath` is non-empty, the image is loaded, clipped to a circle,
+// and drawn as the avatar.  Otherwise the original coloured-circle-with-
+// initials fallback is used.
 
-void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size, const std::string& name, int userId) {
+void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size,
+                          const std::string& name, int userId,
+                          const std::string& avatarPath) {
     using namespace Style;
     double cx = x + size / 2.0, cy = y + size / 2.0, radius = size / 2.0;
+
+    // ── Try drawing the real avatar image first ─────────────────────────
+    if (!avatarPath.empty()) {
+        std::string drawablePath = prepareDrawablePath(avatarPath);
+        cairo_surface_t* img = cairo_image_surface_create_from_png(drawablePath.c_str());
+        if (cairo_surface_status(img) == CAIRO_STATUS_SUCCESS) {
+            double iw = cairo_image_surface_get_width(img);
+            double ih = cairo_image_surface_get_height(img);
+            if (iw > 0 && ih > 0) {
+                // Clip to a circle
+                cairo_save(cr);
+                cairo_new_path(cr);
+                cairo_arc(cr, cx, cy, radius, 0, 2 * M_PI);
+                cairo_clip(cr);
+
+                // Scale the image to fill the circle (centre-crop)
+                double scale = std::max(size / iw, size / ih);
+                double drawW = iw * scale;
+                double drawH = ih * scale;
+                cairo_translate(cr, cx - drawW / 2.0, cy - drawH / 2.0);
+                cairo_scale(cr, scale, scale);
+                cairo_set_source_surface(cr, img, 0, 0);
+                cairo_paint(cr);
+                cairo_restore(cr);
+
+                cairo_surface_destroy(img);
+                return;
+            }
+        }
+        cairo_surface_destroy(img);
+        // Fall through to initials-on-colour-circle if image failed
+    }
+
+    // ── Fallback: coloured circle with initials ─────────────────────────
     auto color = hexToRGBA(nameColor(userId));
     cairo_arc(cr, cx, cy, radius, 0, 2 * M_PI);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
@@ -578,7 +618,7 @@ void Renderer::renderQuote(
         if (sz.isSticker) {
             if (lastInGroup[i]) {
                 double avatarY = curY + sz.h - kAvatarSize;
-                drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
+                drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId, msg.avatarPath);
             }
 
             double sw = sz.mediaW;
@@ -649,7 +689,7 @@ void Renderer::renderQuote(
 
         if (lastInGroup[i]) {
             double avatarY = curY + sz.h - kAvatarSize;
-            drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId);
+            drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId, msg.avatarPath);
         }
 
         double py = curY + kPadTop;

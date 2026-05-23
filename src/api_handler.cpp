@@ -232,8 +232,11 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
             
             // ── Base64 Images ────────────────────────────────────────────────
             if (item.contains("avatarBase64")) {
-                // (Note: in our current renderer logic, we draw avatar from senderId,
-                // but we could extend drawAvatar to take a path instead)
+                msg.avatarPath = saveBase64ToTemp(item.value("avatarBase64", ""), "avatar");
+                if (!msg.avatarPath.empty()) {
+                    tempFiles.push_back(msg.avatarPath);
+                    apiLog("[QuoteAPI] Decoded avatarBase64 -> " + msg.avatarPath);
+                }
             }
             if (item.contains("mediaBase64")) {
                 msg.photoPath = saveBase64ToTemp(item.value("mediaBase64", ""), "media");
