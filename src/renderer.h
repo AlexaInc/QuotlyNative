@@ -62,13 +62,6 @@ struct RenderOptions {
     std::string backgroundColor = "#00000000";
     bool isOut           = false;
     bool hasBubble       = true;
-
-    // Pixel-density multiplier only. It does not change layout sizes, bubble
-    // widths, wrapping, or Telegram-like rendering; it only rasterizes the
-    // final Cairo/Pango drawing at higher resolution. Used for sticker WebP
-    // output to avoid Telegram/client-side blur.
-    double outputScale   = 1.0;
-
     BubbleRounding rounding;
 };
 
