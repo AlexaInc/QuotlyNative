@@ -284,12 +284,12 @@ void Renderer::renderQuote(
     // Portrait media is the common case for quotes. Avoid squeezing tall images
     // into a square box, otherwise the bubble becomes too thin and the media
     // looks visually misplaced compared with Telegram-style quote cards.
-    constexpr double kStickerMaxW  = 170;
-    constexpr double kStickerMaxH  = 300;
-    constexpr double kStickerMinW  = 140;
-    constexpr double kPhotoMaxW    = 200;
-    constexpr double kPhotoMaxH    = 380;
-    constexpr double kPhotoMinW    = 170;
+    constexpr double kStickerMaxW  = 180;
+    constexpr double kStickerMaxH  = 320;
+    constexpr double kStickerMinW  = 150;
+    constexpr double kPhotoMaxW    = 210;
+    constexpr double kPhotoMaxH    = 420;
+    constexpr double kPhotoMinW    = 180;
     constexpr double kPhotoBorderR = 12; // thin border radius
     constexpr double kPhotoBorder  = 2;  // border thickness
 
@@ -364,6 +364,14 @@ void Renderer::renderQuote(
             ImageSize isz = getImageSize(msg.photoPath);
             fitMediaIntoBounds(isz, kPhotoMaxW, kPhotoMaxH, kPhotoMinW,
                                kPhotoMaxW, kPhotoMaxH, photoW, photoH);
+            if (!barePHoto && isz.w > 0 && isz.h > 0) {
+                const double preferredW = std::clamp(std::max((double)tw, photoW), kPhotoMinW, kPhotoMaxW);
+                const double preferredH = preferredW * (double)isz.h / (double)isz.w;
+                if (preferredH <= kPhotoMaxH) {
+                    photoW = preferredW;
+                    photoH = preferredH;
+                }
+            }
         }
 
         double contentW = (double)tw;

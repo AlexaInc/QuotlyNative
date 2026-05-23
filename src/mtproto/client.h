@@ -37,8 +37,10 @@ public:
     // dc_id: 1-5 (default 2 — the primary US/EU mixed DC)
     // Returns false and logs on failure.
     bool connect(const std::string& bot_token, int dc_id = 2);
+    bool connect_imported_auth(int dc_id, int64_t auth_id, const Bytes& auth_bytes);
 
     bool is_connected() const { return m_connected.load(); }
+    int current_dc_id() const { return m_dc_id; }
 
     // Invoke an RPC call: send payload, wait for response (up to timeout_ms).
     RpcResult invoke(const Bytes& request, int timeout_ms = 15000);
@@ -47,6 +49,11 @@ public:
     void disconnect();
 
 private:
+    enum class AuthMode {
+        BotToken,
+        ImportedAuth,
+    };
+
     void recv_loop();           // background thread: reads and dispatches messages
     bool do_connect();          // actual connect + auth
     void schedule_reconnect();  // called when connection drops
@@ -54,7 +61,10 @@ private:
     void dispatch(const Bytes& payload); // route incoming TL messages
 
     // ── State ─────────────────────────────────────────────────────────────────
+    AuthMode          m_auth_mode = AuthMode::BotToken;
     std::string       m_bot_token;
+    int64_t           m_import_auth_id = 0;
+    Bytes             m_import_auth_bytes;
     int               m_dc_id   = 2;
 
     std::unique_ptr<Transport> m_transport;

@@ -32,6 +32,14 @@ static Bytes build_import_bot_auth(const std::string& bot_token) {
     return w.data();
 }
 
+static Bytes build_import_authorization(int64_t auth_id, const Bytes& auth_bytes) {
+    TLWriter w;
+    w.writeInt32(TL::auth_importAuthorization);
+    w.writeInt64(auth_id);
+    w.writeBytes(auth_bytes);
+    return w.data();
+}
+
 // ── TL: invokeWithLayer + initConnection ─────────────────────────────────────
 static Bytes wrap_init_connection(const Bytes& query) {
     const char* api_id_env = std::getenv("TG_API_ID");
@@ -136,7 +144,22 @@ Client::~Client() {
 }
 
 bool Client::connect(const std::string& bot_token, int dc_id) {
+    m_auth_mode = AuthMode::BotToken;
     m_bot_token = bot_token;
+    m_import_auth_id = 0;
+    m_import_auth_bytes.clear();
+    m_dc_id = dc_id;
+    m_stopping = false;
+    m_backoff_s = 1;
+    m_reconnect_scheduled = false;
+    return do_connect();
+}
+
+bool Client::connect_imported_auth(int dc_id, int64_t auth_id, const Bytes& auth_bytes) {
+    m_auth_mode = AuthMode::ImportedAuth;
+    m_bot_token.clear();
+    m_import_auth_id = auth_id;
+    m_import_auth_bytes = auth_bytes;
     m_dc_id = dc_id;
     m_stopping = false;
     m_backoff_s = 1;
@@ -146,9 +169,11 @@ bool Client::connect(const std::string& bot_token, int dc_id) {
 
 bool Client::do_connect() {
     std::array<bool, 6> tried{};
+    const bool fixedDc = (m_auth_mode == AuthMode::ImportedAuth);
     int attempt_dc = (m_dc_id >= 1 && m_dc_id <= 5) ? m_dc_id : 2;
 
     auto next_untried = [&](int after_dc) -> int {
+        if (fixedDc) return 0;
         for (int step = 1; step <= 5; ++step) {
             int dc = ((after_dc - 1 + step) % 5) + 1;
             if (!tried[dc]) return dc;
@@ -167,8 +192,10 @@ bool Client::do_connect() {
             m_auth_key = std::make_unique<AuthKey>(generate_auth_key(*m_transport, attempt_dc));
             m_session = std::make_unique<Session>(*m_transport, *m_auth_key);
 
-            std::cout << "  [MTProto] Authenticating bot..." << std::endl;
-            Bytes auth_req = build_import_bot_auth(m_bot_token);
+            std::cout << "  [MTProto] Authenticating..." << std::endl;
+            Bytes auth_req = (m_auth_mode == AuthMode::ImportedAuth)
+                ? build_import_authorization(m_import_auth_id, m_import_auth_bytes)
+                : build_import_bot_auth(m_bot_token);
             int64_t msg_id = m_session->send(wrap_init_connection(auth_req));
 
             bool auth_ok = false;
@@ -186,7 +213,9 @@ bool Client::do_connect() {
                     if (inner_cid == TL::rpc_error) {
                         int32_t err_code = inner_reader.readInt32();
                         std::string err_msg = inner_reader.readString();
-                        throw std::runtime_error("Bot auth error " + std::to_string(err_code) + ": " + err_msg);
+                        throw std::runtime_error(std::string(
+                            (m_auth_mode == AuthMode::ImportedAuth) ? "Imported auth error " : "Bot auth error ")
+                            + std::to_string(err_code) + ": " + err_msg);
                     }
                     return true;
                 }
@@ -238,8 +267,13 @@ bool Client::do_connect() {
             m_backoff_s = 1;
             m_reconnect_scheduled = false;
             m_dc_id = attempt_dc;
-            std::cout << "  [MTProto] ✅ Connected to DC" << m_dc_id
-                      << " as bot (AlexaInc/QuotlyNative)" << std::endl;
+            std::cout << "  [MTProto] ✅ Connected to DC" << m_dc_id;
+            if (m_auth_mode == AuthMode::ImportedAuth) {
+                std::cout << " with imported authorization";
+            } else {
+                std::cout << " as bot (AlexaInc/QuotlyNative)";
+            }
+            std::cout << std::endl;
 
             join_thread_if_needed(m_recv_thread);
             m_recv_thread = std::thread([this] { recv_loop(); });
@@ -255,7 +289,7 @@ bool Client::do_connect() {
             m_connected = false;
 
             int migrate_dc = parse_migrate_dc(err);
-            if (migrate_dc >= 1 && migrate_dc <= 5 && !tried[migrate_dc]) {
+            if (!fixedDc && migrate_dc >= 1 && migrate_dc <= 5 && !tried[migrate_dc]) {
                 attempt_dc = migrate_dc;
                 continue;
             }

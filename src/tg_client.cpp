@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -44,6 +45,19 @@ void clearFailure(const std::string& emojiId) {
     std::lock_guard<std::mutex> lock(g_failedEmojiMutex);
     g_failedEmojiCache.erase(emojiId);
 }
+
+int parseMigrateDc(const std::string& msg) {
+    const std::string needle = "_MIGRATE_";
+    const auto pos = msg.find(needle);
+    if (pos == std::string::npos) return 0;
+    int dc = 0;
+    bool any = false;
+    for (size_t i = pos + needle.size(); i < msg.size() && std::isdigit(static_cast<unsigned char>(msg[i])); ++i) {
+        any = true;
+        dc = dc * 10 + (msg[i] - '0');
+    }
+    return any ? dc : 0;
+}
 }
 
 TgClient::TgClient(int apiId, const std::string& apiHash)
@@ -61,6 +75,47 @@ bool TgClient::authenticate(const std::string& botToken) {
         return false;
     }
     return m_mtproto.connect(botToken, 2);
+}
+
+std::shared_ptr<MTProto::Client> TgClient::ensure_authorized_dc_client(int dcId) {
+    if (dcId <= 0 || dcId == m_mtproto.current_dc_id()) {
+        return std::shared_ptr<MTProto::Client>(&m_mtproto, [](MTProto::Client*) {});
+    }
+
+    std::lock_guard<std::mutex> lock(m_dc_clients_mutex);
+    auto found = m_dc_clients.find(dcId);
+    if (found != m_dc_clients.end() && found->second && found->second->is_connected()) {
+        return found->second;
+    }
+
+    MTProto::TLWriter ew;
+    ew.writeInt32(MTProto::TL::auth_exportAuthorization);
+    ew.writeInt32(dcId);
+    auto exported = m_mtproto.invoke(ew.data(), 10000);
+    if (!exported.ok) {
+        apiLog("[TgClient] auth.exportAuthorization failed: " + std::to_string(exported.error_code) + " " + exported.error_message);
+        return nullptr;
+    }
+
+    MTProto::TLReader er(exported.payload);
+    const int32_t constructor = er.readInt32();
+    if (constructor != MTProto::TL::auth_exportedAuthorization) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "[TgClient] Unexpected exportAuthorization result: 0x%08x", (unsigned)constructor);
+        apiLog(buf);
+        return nullptr;
+    }
+
+    const int64_t authId = er.readInt64();
+    const MTProto::Bytes authBytes = er.readBytes();
+    auto client = std::make_shared<MTProto::Client>();
+    if (!client->connect_imported_auth(dcId, authId, authBytes)) {
+        apiLog("[TgClient] Failed to import authorization for DC" + std::to_string(dcId));
+        return nullptr;
+    }
+
+    m_dc_clients[dcId] = client;
+    return client;
 }
 
 static std::string shellQuote(const std::string& s) {
@@ -94,11 +149,12 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
     std::string token(tok);
 
     try {
-        std::string ids = "[\"" + emojiId + "\"]";
-        std::string url = "https://api.telegram.org/bot" + token + "/getCustomEmojiStickers";
-        std::string cmd =
-            "curl -sSf --connect-timeout 3 --max-time 8 -X POST --data-urlencode custom_emoji_ids=" +
-            shellQuote(ids) + " " + shellQuote(url);
+        const std::string payload = std::string("{\"custom_emoji_ids\":[\"") + emojiId + "\"]}";
+        const std::string url = "https://api.telegram.org/bot" + token + "/getCustomEmojiStickers";
+        const std::string cmd =
+            "curl -L --http1.1 -sS --retry 2 --retry-delay 1 --retry-all-errors "
+            "--connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' -d " +
+            shellQuote(payload) + " " + shellQuote(url) + " 2>/dev/null";
         std::string body = runCommandCapture(cmd);
         if (body.empty()) return "";
 
@@ -112,8 +168,10 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
         else fileId = st.value("file_id", "");
         if (fileId.empty()) return "";
 
-        std::string getFileUrl = "https://api.telegram.org/bot" + token + "/getFile?file_id=" + fileId;
-        std::string fileBody = runCommandCapture("curl -sSf --connect-timeout 3 --max-time 8 " + shellQuote(getFileUrl));
+        const std::string getFileUrl = "https://api.telegram.org/bot" + token + "/getFile?file_id=" + fileId;
+        const std::string fileBody = runCommandCapture(
+            "curl -L --http1.1 -sS --retry 2 --retry-delay 1 --retry-all-errors --connect-timeout 5 --max-time 15 " +
+            shellQuote(getFileUrl) + " 2>/dev/null");
         if (fileBody.empty()) return "";
 
         auto fj = nlohmann::json::parse(fileBody);
@@ -125,10 +183,11 @@ static std::string fetchCustomEmojiViaBotApi(const std::string& emojiId) {
         std::string out = std::string("emoji_cache") + "/emoji_" + emojiId + "_botapi" + extFromPath(filePath);
         if (fileExists(out)) return out;
 
-        std::string downloadUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
-        int rc = system((
-            "curl -L -sSf --connect-timeout 3 --max-time 12 -o " + shellQuote(out) + " " + shellQuote(downloadUrl)
-        ).c_str());
+        const std::string downloadUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
+        const std::string downloadCmd =
+            "curl -L --http1.1 -sS --retry 2 --retry-delay 1 --retry-all-errors --connect-timeout 5 --max-time 20 -o " +
+            shellQuote(out) + " " + shellQuote(downloadUrl) + " >/dev/null 2>&1";
+        int rc = system(downloadCmd.c_str());
         if (rc == 0 && fileExists(out)) {
             apiLog("[TgClient] Bot API emoji asset: " + out);
             return out;
@@ -326,7 +385,8 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
         ThumbInfo thumb;
         if (flags & 1) readPhotoSizeVector(r, thumb);
         if (flags & 2) skipVideoSizeVector(r);
-        if (!r.atEnd()) r.readInt32();
+        int32_t docDcId = 0;
+        if (!r.atEnd()) docDcId = r.readInt32();
 
         if (!thumb.cachedBytes.empty()) {
             std::string cached = saveBytes(cacheDir + "/emoji_" + emojiId + "_cached", thumb.cachedBytes);
@@ -337,18 +397,36 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
         }
 
         auto download = [&](const std::string& requestedThumb) -> std::string {
-            MTProto::TLWriter fw;
-            fw.writeInt32(MTProto::TL::upload_getFile);
-            fw.writeInt32(0);
-            fw.writeInt32(MTProto::TL::inputDocumentFileLocation);
-            fw.writeInt64(doc_id);
-            fw.writeInt64(doc_access_hash);
-            fw.writeBytes(doc_file_ref);
-            fw.writeString(requestedThumb);
-            fw.writeInt64(0);
-            fw.writeInt32(1024 * 1024);
+            auto activeClient = ensure_authorized_dc_client(docDcId > 0 ? docDcId : m_mtproto.current_dc_id());
+            if (!activeClient) {
+                apiLog("[TgClient] No authorized MTProto client for DC" + std::to_string(docDcId));
+                return "";
+            }
 
-            auto fres = m_mtproto.invoke(fw.data(), 10000);
+            auto doRequest = [&](MTProto::Client& client) -> MTProto::RpcResult {
+                MTProto::TLWriter fw;
+                fw.writeInt32(MTProto::TL::upload_getFile);
+                fw.writeInt32(0);
+                fw.writeInt32(MTProto::TL::inputDocumentFileLocation);
+                fw.writeInt64(doc_id);
+                fw.writeInt64(doc_access_hash);
+                fw.writeBytes(doc_file_ref);
+                fw.writeString(requestedThumb);
+                fw.writeInt64(0);
+                fw.writeInt32(1024 * 1024);
+                return client.invoke(fw.data(), 10000);
+            };
+
+            auto fres = doRequest(*activeClient);
+            if (!fres.ok && fres.error_code == 303) {
+                const int migrateDc = parseMigrateDc(fres.error_message);
+                if (migrateDc > 0 && migrateDc != activeClient->current_dc_id()) {
+                    apiLog("[TgClient] upload.getFile redirected to DC" + std::to_string(migrateDc));
+                    activeClient = ensure_authorized_dc_client(migrateDc);
+                    if (!activeClient) return "";
+                    fres = doRequest(*activeClient);
+                }
+            }
             if (!fres.ok) {
                 apiLog("[TgClient] upload.getFile failed: " + std::to_string(fres.error_code) + " " + fres.error_message);
                 return "";
@@ -366,7 +444,7 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
             fr.readInt32();
             fr.readInt32();
             MTProto::Bytes b = fr.readBytes();
-            apiLog("[TgClient] Downloaded " + std::to_string(b.size()) + " bytes" + (requestedThumb.empty() ? "" : " thumb=" + requestedThumb));
+            apiLog("[TgClient] Downloaded " + std::to_string(b.size()) + " bytes from DC" + std::to_string(activeClient->current_dc_id()) + (requestedThumb.empty() ? "" : " thumb=" + requestedThumb));
             return saveBytes(cacheDir + "/emoji_" + emojiId + (requestedThumb.empty() ? "" : "_thumb_" + requestedThumb), b, requestedThumb.empty() ? mime : "");
         };
 
@@ -387,11 +465,7 @@ std::string TgClient::fetchCustomEmoji(const std::string& emojiId) {
         return mtprotoPath;
     }
 
-    if (std::string botPath = fetchCustomEmojiViaBotApi(emojiId); !botPath.empty()) {
-        clearFailure(emojiId);
-        return botPath;
-    }
-
+    apiLog("[TgClient] Custom emoji fetch failed over MTProto only");
     rememberFailure(emojiId);
     return "";
 }

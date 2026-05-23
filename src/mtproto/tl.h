@@ -84,6 +84,9 @@ namespace TL {
     constexpr int32_t msg_container          = (int32_t)0x73f1f8dcu;
 
     // ── API Methods / Types ──────────────────────────────────────────────────
+    constexpr int32_t auth_exportAuthorization        = (int32_t)0xe5bfffcdu;
+    constexpr int32_t auth_importAuthorization        = (int32_t)0xa57a7dadu;
+    constexpr int32_t auth_exportedAuthorization      = (int32_t)0xb434e2b8u;
     constexpr int32_t messages_getCustomEmojiDocuments = (int32_t)0xd9ab0f54u;
     constexpr int32_t upload_getFile                  = (int32_t)0xbe5335beu;
     constexpr int32_t document                        = (int32_t)0x8fd4c4d8u;
