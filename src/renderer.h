@@ -51,6 +51,7 @@ struct MessageData {
     bool        isOutgoing  = false;
     ReplyData   reply;
     std::string photoPath;             // path to downloaded photo (if any)
+    std::string avatarPath;            // path to decoded avatarBase64 image (if any)
     MediaType   mediaType   = MediaType::None;
     uint64_t    emojiStatusId = 0;     // custom emoji status ID
     std::vector<CustomEmoji> customEmojis;
@@ -80,7 +81,8 @@ private:
 
     static void drawAvatar(cairo_t* cr, double x, double y,
                             double size, const std::string& name,
-                            int userId);
+                            int userId,
+                            const std::string& avatarPath = "");
 
     static void drawReply(cairo_t* cr, double x, double y,
                            double width, const ReplyData& reply, const std::map<uint64_t, std::string>& emojiMap);
