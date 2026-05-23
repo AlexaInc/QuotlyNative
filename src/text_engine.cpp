@@ -2,8 +2,10 @@
 // developer hansaka@alexainc
 
 #include "text_engine.h"
+#include "style_constants.h"
 #include <algorithm>
 #include <cstdint>
+#include <string>
 
 namespace Quote {
 
@@ -64,6 +66,22 @@ static int utf16OffsetToUtf8ByteOffset(const std::string& text, int utf16Offset)
     return static_cast<int>(i);
 }
 
+// Pango letter_spacing is expressed in Pango units (PANGO_SCALE = 1024 per px).
+// We need to reserve a horizontal cell wide enough to contain the rendered
+// custom-emoji bitmap (drawn separately by the renderer). To keep things in
+// sync, we derive the spacing from the configured Style::kEmojiSize so that
+// resizing the emoji only requires editing one constant.
+static std::string customEmojiSpanOpen() {
+    // Cell width budget = emoji px + a small horizontal padding so the bitmap
+    // never visually kisses the next glyph. We shrink the placeholder glyph
+    // itself to ~1pt (effectively invisible) and inflate the run with
+    // letter_spacing so Pango's line-breaker reserves the full cell.
+    const int cellPx = static_cast<int>(Style::kEmojiSize) + 4; // 4px breathing room
+    const int spacing = cellPx * 1024; // PANGO_SCALE = 1024 units per pixel
+    return std::string("<span font_size='1pt' alpha='1' fallback='false' letter_spacing='")
+           + std::to_string(spacing) + "'>";
+}
+
 std::string TextEngine::processEntities(const std::string& text,
                                          const nlohmann::json& entities) {
     struct Tag { int pos; int priority; std::string markup; };
@@ -98,7 +116,12 @@ std::string TextEngine::processEntities(const std::string& text,
                 // Hide the one-character placeholder supplied by Telegram. The
                 // renderer overlays the downloaded custom-emoji image at this
                 // exact Pango index using MessageData::customEmojis.
-                open = "<span alpha='1' fallback='false' letter_spacing='14336'>";
+                //
+                // We reserve a full emoji-sized cell so that Pango's line
+                // breaker correctly accounts for the bitmap that will be drawn
+                // on top — otherwise the bitmap can overflow the bubble's
+                // right edge when an emoji lands at end-of-line. (Bug fix.)
+                open = customEmojiSpanOpen();
                 close = "</span>";
             }
             else { continue; }

@@ -193,16 +193,34 @@ void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const Re
     pango_cairo_show_layout(cr, tl);
     
     if (!reply.customEmojis.empty()) {
+        // Reply previews are single-line and ellipsized. Determine the byte
+        // range that is actually visible so we don't draw emoji bitmaps over
+        // (or beyond) the ellipsis. (Bug fix: emojis used to leak past the
+        // truncated reply text and float into empty space outside the bubble.)
+        int visibleEnd = (int)reply.text.size();
+        PangoLayoutLine* firstLine = pango_layout_get_line_readonly(tl, 0);
+        if (firstLine) {
+            visibleEnd = firstLine->start_index + firstLine->length;
+        }
+        int layoutPxW = 0, layoutPxH = 0;
+        pango_layout_get_pixel_size(tl, &layoutPxW, &layoutPxH);
+
         for (const auto& ce : reply.customEmojis) {
             uint64_t eid = ce.documentId;
             if (!emojiMap.count(eid)) continue;
-            PangoRectangle pos;
             int byteIndex = std::clamp(ce.offset, 0, (int)reply.text.size());
+            if (byteIndex >= visibleEnd) continue; // hidden behind ellipsis
+
+            PangoRectangle pos;
             pango_layout_index_to_pos(tl, byteIndex, &pos);
             double emojiSize = 16;
-            double ex = x + 8 + PANGO_PIXELS(pos.x);
+            double cellW = std::max(emojiSize, (double)PANGO_PIXELS(pos.width));
+            double ex = x + 8 + PANGO_PIXELS(pos.x) + (cellW - emojiSize) / 2.0;
             double lineH = std::max(emojiSize, (double)PANGO_PIXELS(pos.height));
             double ey = y + 18 + PANGO_PIXELS(pos.y) + (lineH - emojiSize) / 2.0;
+
+            // Final safety clamp: never draw past the layout's right edge.
+            if (ex + emojiSize > x + 8 + layoutPxW) continue;
             drawEmojiSurface(cr, ex, ey, emojiSize, emojiMap.at(eid));
         }
     }
@@ -579,6 +597,13 @@ void Renderer::renderQuote(
 
             // ── Inline Emojis ─────────────────────────────────────────────
             if (!msg.customEmojis.empty()) {
+                // The text engine reserves a wide cell for each custom emoji
+                // via `letter_spacing`, so Pango's line breaker has already
+                // accounted for the bitmap's footprint. We just need to centre
+                // the bitmap inside that reserved cell to keep visual rhythm.
+                // (Bug fix: previously the bitmap anchored to pos.x and could
+                // overflow the bubble on the right when the cell was wider
+                // than the placeholder glyph.)
                 for (const auto& ce : msg.customEmojis) {
                     uint64_t eid = ce.documentId;
                     if (!emojiMap.count(eid)) {
@@ -590,9 +615,17 @@ void Renderer::renderQuote(
                     int byteIndex = std::clamp(ce.offset, 0, (int)msg.text.size());
                     pango_layout_index_to_pos(tl, byteIndex, &pos);
                     double emojiSize = 22;
-                    double ex = bubbleX + kPadLeft + PANGO_PIXELS(pos.x);
+                    double cellW = std::max(emojiSize, (double)PANGO_PIXELS(pos.width));
+                    double ex = bubbleX + kPadLeft + PANGO_PIXELS(pos.x) + (cellW - emojiSize) / 2.0;
                     double lineH = std::max(emojiSize, (double)PANGO_PIXELS(pos.height));
                     double ey = py + PANGO_PIXELS(pos.y) + (lineH - emojiSize) / 2.0;
+
+                    // Safety clamp: never let the bitmap escape the bubble's
+                    // inner text rectangle.
+                    double rightEdge = bubbleX + sz.bubbleW - kPadRight;
+                    if (ex + emojiSize > rightEdge) {
+                        ex = rightEdge - emojiSize;
+                    }
                     std::cout << "[Renderer] Drawing inline emoji " << eid << " at " << ex << ", " << ey << std::endl;
                     drawEmojiSurface(cr, ex, ey, emojiSize, emojiMap.at(eid));
                 }
