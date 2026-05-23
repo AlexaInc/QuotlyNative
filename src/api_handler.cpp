@@ -317,16 +317,48 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
         RenderOptions options;
         options.transparent = transparent;
         options.hasBubble = true;
+        // Default to Telegram-sticker-safe rendering because this API is
+        // commonly used by quote bots via sendSticker().  Pass
+        // {"telegramSticker":false} (or {"sticker":false}) to keep the
+        // old photo-style 1x output.
+        options.telegramSticker = body.value("telegramSticker",
+                                  body.value("sticker",
+                                  body.value("stickerMode", true)));
+        options.stickerMaxSide = body.value("stickerMaxSide", 512.0);
+        options.stickerDpiScale = body.value("stickerDpiScale", 2.0);
 
-        apiLog("[QuoteAPI] Rendering quote with " + std::to_string(emojiMap.size()) + " cached emojis");
+        apiLog("[QuoteAPI] Rendering quote with " + std::to_string(emojiMap.size()) + " cached emojis" +
+               (options.telegramSticker ? " (telegram sticker mode)" : ""));
         Renderer::renderQuote(outputPath, msgs, options, emojiMap);
 
-        std::ifstream file(outputPath, std::ios::binary);
+        // Optional lossless WebP response for bots that upload the bytes
+        // directly with sendSticker(). Telegram static stickers are WebP, so
+        // this avoids an extra lossy/server-side conversion step.
+        std::string responsePath = outputPath;
+        std::string contentType = "image/png";
+        std::string format = body.value("format", body.value("outputFormat", std::string("png")));
+        std::transform(format.begin(), format.end(), format.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        bool wantWebp = body.value("webp", false) || format == "webp" || format == "sticker";
+        if (wantWebp) {
+            std::string webpPath = outputPath + ".webp";
+            std::string cmd = "cwebp -quiet -lossless -q 100 -m 6 \"" + outputPath + "\" -o \"" + webpPath + "\"";
+            int rc = system(cmd.c_str());
+            if (rc == 0 && std::filesystem::exists(webpPath) && std::filesystem::file_size(webpPath) > 0) {
+                responsePath = webpPath;
+                contentType = "image/webp";
+                tempFiles.push_back(webpPath);
+            } else {
+                apiLog("[QuoteAPI] cwebp conversion failed; falling back to PNG");
+            }
+        }
+
+        std::ifstream file(responsePath, std::ios::binary);
         if (!file) return crow::response(500, "Failed to read generated quote");
 
         std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         crow::response res(content);
-        res.set_header("Content-Type", "image/png");
+        res.set_header("Content-Type", contentType);
 
         // CLEANUP
         std::filesystem::remove(outputPath);

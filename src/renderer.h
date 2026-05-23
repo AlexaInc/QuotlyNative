@@ -62,6 +62,16 @@ struct RenderOptions {
     std::string backgroundColor = "#00000000";
     bool isOut           = false;
     bool hasBubble       = true;
+
+    // Telegram displays stickers in a much smaller chat slot and static
+    // stickers are limited to a 512 px bounding box.  The renderer can use a
+    // narrower logical layout and paint it at high DPI so text is rasterized
+    // directly at sticker size instead of being upscaled/downscaled later by
+    // Telegram (which makes letters look blocky/pixelated).
+    bool   telegramSticker = true;
+    double stickerMaxSide  = 512.0;
+    double stickerDpiScale = 2.0;
+
     BubbleRounding rounding;
 };
 
