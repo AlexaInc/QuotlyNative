@@ -1,10 +1,10 @@
 # QuotlyNative
 
-A high-performance, native **C++17** rendering service that turns Telegram-style
-message payloads into pixel-perfect quote images — bubbles, replies, media,
-custom premium emojis, the lot. Built on **Cairo + Pango** for typography and
-**Crow** for the HTTP API, with an embedded **MTProto** client for fetching
-premium-emoji bitmaps directly from Telegram.
+A high-performance, native **C++17** rendering service that turns Telegram-
+style message payloads into pixel-perfect quote images — bubbles, replies,
+media, custom premium emojis, the lot. Built on **Cairo + Pango** for
+typography and **Crow** for the HTTP API, with an embedded **MTProto** client
+for fetching premium-emoji bitmaps directly from Telegram.
 
 > Drop-in replacement for the JavaScript [`quote-api`](https://github.com/LyoSU/quote-api)
 > service, but ~10× faster and an order of magnitude lighter on memory.
@@ -17,7 +17,7 @@ premium-emoji bitmaps directly from Telegram.
 |---|---|
 | Telegram-style chat bubbles | Tail, rounding, grouping, in/out colors |
 | Rich text entities | `bold`, `italic`, `underline`, `strikethrough`, `spoiler`, `code`, `pre`, `text_link`, `mention`, `custom_emoji` |
-| Premium / custom emojis | Fetched on-demand via embedded MTProto client, cached on disk |
+| Premium / custom emojis | Inline glyphs with proper line-breaking + baseline alignment (tdesktop-style); bitmaps fetched on-demand via embedded MTProto client and cached on disk |
 | Reply previews | Single-line, ellipsised, with name color and custom-emoji support |
 | Inline media | Photos (with caption layout) and stickers (bare, rounded thumbnail) |
 | Multi-message threads | Author grouping, avatar shown only on last bubble of a group |
@@ -30,39 +30,39 @@ premium-emoji bitmaps directly from Telegram.
 
 ## 🩹 Bug fixes in this build
 
-This branch contains targeted fixes for two rendering regressions visible in
-the reference output (`uploads/Hfqly (3).png`):
+The custom-emoji rendering pipeline has been rewritten end-to-end to mirror
+what [tdesktop](https://github.com/telegramdesktop/tdesktop) does in
+`lib_ui/ui/text/text_block.cpp`. Specifically:
 
-1. **Premium emojis overflowed the bubble's right edge.**
-   The text engine reserved a placeholder cell whose width was *less than* the
-   bitmap we then painted on top. When the emoji landed at end-of-line the
-   bitmap bled past the bubble's right edge.
+* **Bitmaps no longer overflow the bubble's right edge.** A custom emoji is
+  now a real glyph in the Pango line, so the line-breaker reserves the right
+  amount of horizontal space and wraps end-of-line emojis to the next line
+  instead of letting them bleed past the bubble.
+* **Bitmaps no longer drift above or below the text baseline.** The emoji
+  is placed on the line's baseline by Pango itself (just like every other
+  glyph), so vertical alignment matches the text exactly — no more "emoji
+  riding low" artefacts.
+* **Reply previews no longer show orphan emojis past the ellipsis.** Because
+  the emoji is a real glyph in the layout, Pango's ellipsizer correctly
+  chooses the cutoff *before* the emoji when the line doesn't fit, instead
+  of cutting off the text but still rendering the bitmap.
 
-   *Fix*: `TextEngine` now emits a custom-emoji span with `font_size='1pt'` +
-   `letter_spacing` sized from `Style::kEmojiSize`, so Pango's line breaker
-   reserves a cell that's always wide enough for the bitmap. The renderer
-   then *centers* the bitmap inside that cell and clamps against the bubble's
-   inner-right edge as a safety net.
+Implementation summary:
 
-2. **Custom emojis in reply previews floated past the ellipsis.**
-   Reply previews are single-line and ellipsised, but emoji bitmaps were
-   still drawn at their original byte index even when that index was already
-   inside the truncated tail — so the bitmap ended up dangling in empty
-   space to the right of the "…".
+| | Before | After |
+|---|---|---|
+| Custom emoji width reservation | `<span letter_spacing='14336'>` in markup | `pango_attr_shape_new` (real glyph metrics) |
+| Vertical placement | Manual centring formula in a second draw pass | Pango baseline placement (no second pass) |
+| Painting | Manual loop over `customEmojis` with `pango_layout_index_to_pos` | `pango_cairo_context_set_shape_renderer` callback |
+| End-of-line handling | Could overflow; could orphan past ellipsis | Wraps to next line / is hidden by ellipsis |
 
-   *Fix*: before drawing each reply-preview emoji we now read the first
-   layout line's visible byte range via `pango_layout_get_line_readonly` and
-   skip any emoji whose index falls beyond it.
+A before/after comparison rendered from the user-supplied payload:
 
-A before/after comparison rendered from the same payload:
-
-| Before | After |
+| `docs/bug_before.png` | `docs/bug_after.png` |
 |---|---|
-| Yellow & red bitmaps escape the bubble; reply emoji floats past `…` | Bitmaps wrap cleanly inside the bubble; reply emoji is hidden behind the ellipsis |
+| Emoji bitmaps escape the bubble; reply emoji floats past `…`; vertical drift | All emojis sit inside the bubble; reply emoji is correctly hidden behind the ellipsis; baseline-aligned |
 
-(Test fixtures live in `tests/`. The harness used to produce the comparison
-images lives in this conversation's `/tmp/qtest/` and can be inlined as
-`tests/render_smoke.cpp` if desired.)
+See `CHANGELOG.md` for the long-form write-up.
 
 ---
 
@@ -113,7 +113,8 @@ A `Dockerfile.hf` is also provided, pre-tuned for **Hugging Face Spaces**.
 | `PORT` | optional | HTTP listen port (default **7860**) |
 
 Without TG credentials the server still starts and renders **everything
-except** premium emojis (placeholders are reserved but no bitmap is painted).
+except** premium emojis (in that case the placeholder character is shown as
+whatever your system emoji font provides — better than a blank box).
 
 ---
 
@@ -202,22 +203,66 @@ HTTP (Crow) ────►   │ ApiHandler  │  parses JSON, decodes base64 m
                 │                     │ (cached PNGs)
                 └──────────┬──────────┘
                            │
-                    ┌──────▼──────┐
-                    │  Renderer   │  Cairo + Pango → PNG
-                    └─────────────┘
+                    ┌──────▼──────────────────────────────┐
+                    │  Renderer (Cairo + Pango)           │
+                    │                                     │
+                    │   ┌──────────────────────────────┐  │
+                    │   │ attachCustomEmojiShapes()    │  │
+                    │   │ ─ adds pango_attr_shape per  │  │
+                    │   │   custom emoji, so emojis    │  │
+                    │   │   are real glyphs in the     │  │
+                    │   │   line (width reserved,      │  │
+                    │   │   wrapping handled, baseline │  │
+                    │   │   alignment automatic)       │  │
+                    │   └──────────────┬───────────────┘  │
+                    │                  ▼                  │
+                    │   pango_cairo_show_layout(…)        │
+                    │   ─ invokes shapeRenderer()         │
+                    │     for each emoji shape, which     │
+                    │     blits the cached bitmap into    │
+                    │     the reserved box.               │
+                    └─────────────────────────────────────┘
 ```
 
 * **`src/api_handler.cpp`** — HTTP entrypoint; JSON parsing; base64 decoding;
   temp-file lifecycle.
-* **`src/text_engine.cpp`** — Converts Telegram entities to Pango markup, with
-  UTF-16 → UTF-8 offset translation. Reserves wide cells for custom emojis.
-* **`src/renderer.cpp`** — All Cairo drawing: bubbles, tails, avatars, photos,
-  stickers, reply previews, inline emoji bitmaps.
-* **`src/style_constants.h`** — All visual constants (radii, paddings, colors,
-  emoji sizes) extracted from `tdesktop` source.
+* **`src/text_engine.cpp`** — Converts Telegram entities to Pango markup
+  (bold/italic/underline/…), with UTF-16 → UTF-8 offset translation. **Does
+  not** emit any markup for `custom_emoji` entities — those are handled
+  natively in `renderer.cpp` via `pango_attr_shape_new`.
+* **`src/renderer.cpp`** — All Cairo drawing: bubbles, tails, avatars,
+  photos, stickers, reply previews, and custom-emoji-as-glyph plumbing.
+* **`src/style_constants.h`** — All visual constants (radii, paddings,
+  colors, emoji sizes) extracted from `tdesktop` source.
 * **`src/tg_client.cpp` + `src/mtproto/*`** — Embedded MTProto client used to
   download `documentClassic` files for `custom_emoji_id` ids.
 * **`src/main.cpp`** — CLI parsing, credentials validation, Crow boot.
+
+### Why `pango_attr_shape_new` ?
+
+Pango is unaware of our emoji bitmaps. If we ask it to lay out
+`"Hello ✨ world"` it will shape the ✨ using whatever the system emoji font
+produces — that's a glyph of *some* size, not necessarily the size of the
+bitmap we want to paint.
+
+`pango_attr_shape_new` is Pango's officially supported escape hatch for that
+exact mismatch: it tells Pango *"for these N bytes, treat the run as a
+single shaped glyph with these exact ink + logical extents"*. Pango then:
+
+* breaks lines correctly (the shape's logical width is what the line-breaker
+  budgets against the layout width),
+* aligns vertically on the baseline (the shape's `ink_rect.y` is the offset
+  from baseline, negative = above),
+* applies ellipsization correctly (the shape participates in the
+  end-of-line truncation decision).
+
+At render time, `pango_cairo_context_set_shape_renderer` installs a callback
+that Pango will invoke for every shape attribute it encounters — with the
+cairo *current point* already moved to the glyph's baseline origin. We just
+blit the cached PNG inside the reserved box.
+
+This is mechanically the same as what tdesktop does with its
+`CustomEmojiBlock`, just expressed in Pango's vocabulary instead of Qt's.
 
 ---
 
@@ -254,8 +299,12 @@ headers throughout `src/`).
   `./QuoteAPI --gen-auth-key auth.bin` once on a clean residential IP, then
   ship `auth.bin` and start the server with
   `./QuoteAPI --load-auth-key auth.bin`.
-* **Premium emojis render as blank squares** — the bitmap fetch failed (check
-  `/debug/logs`). The renderer still reserves the correct horizontal space,
-  so layout is unaffected.
+* **Premium emojis render as blank boxes** — the bitmap fetch failed (check
+  `/debug/logs`). Pango still reserved the correct horizontal space, so
+  layout is unaffected — the box just isn't filled in.
+* **Premium emojis render as monochrome system glyphs** — `emojiMap` doesn't
+  contain the `documentId`. No shape attribute is added for that emoji, so
+  Pango falls back to your OS emoji font (Noto Color Emoji, Twemoji, …).
+  Fix the MTProto fetch and the bitmap will replace the fallback.
 * **Text overflows the bubble** — should not happen after this patch; please
   file an issue with the offending payload.

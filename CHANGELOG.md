@@ -1,44 +1,95 @@
 # Changelog
 
-## Unreleased — Premium-emoji layout fix
+## Unreleased — Custom emoji rendering rewrite (tdesktop-style inline glyphs)
 
-### Fixed
-* **Premium / custom emojis no longer overflow the bubble's right edge.**
-  The text engine was reserving a Pango layout cell of `glyph_advance + 14px`
-  for each custom-emoji entity, but the renderer paints the bitmap at **22 px**
-  (16 px in reply previews). When an emoji landed at end-of-line the bitmap
-  bled past the bubble — clearly visible on bubbles like *"Hello! Check out
-  these premium emojis 👀🔥"* in the reference render.
+### The bug
 
-  *src/text_engine.cpp*: introduced `customEmojiSpanOpen()` which emits
-  `<span font_size='1pt' alpha='1' fallback='false' letter_spacing='N'>` with
-  `N` derived from `Style::kEmojiSize + 4 px` (in Pango units). The shrunken
-  placeholder glyph plus inflated letter-spacing make Pango reserve a cell
-  that's always wide enough for the bitmap, so the line-breaker now correctly
-  wraps or grows the bubble.
+Premium / custom emojis used to be drawn as a **second pass** on top of an
+already-laid-out Pango paragraph. The text engine emitted a `<span>` with
+`letter_spacing` to "reserve" some horizontal room for the bitmap, and the
+renderer then iterated `MessageData::customEmojis`, asked Pango for the
+`pos.x / pos.y` of the placeholder character, and blitted the PNG there.
 
-  *src/renderer.cpp*: emoji bitmaps are now **centered** inside the reserved
-  cell (`ex = pos.x + (cell − emojiSize)/2`), with a final safety clamp
-  against `bubbleX + bubbleW − kPadRight`.
+That model has three independent failure modes, all of which were visible in
+the supplied reference render:
 
-* **Custom emojis in reply previews are no longer drawn past the ellipsis.**
-  Reply previews are ellipsised single lines (`PANGO_ELLIPSIZE_END`), but
-  emoji bitmaps were still painted at their original byte index. When the
-  index fell inside the truncated tail, the bitmap floated in empty space to
-  the right of the "…" — clearly visible on the *"Quoted message with bold
-  and a link and custom …🤣"* preview.
+1. **Right-edge overflow.** Pango sized the reserved cell from the
+   placeholder glyph's *advance*, not from the bitmap's actual width. When
+   the placeholder happened to land at end-of-line the bitmap painted past
+   the bubble's right wall.
+2. **Vertical drift.** The second-pass code positioned the bitmap using
+   `pos.y` + a custom centring formula. Any mismatch between the
+   placeholder's font metrics and the bitmap height made the emoji ride
+   above (or below) the surrounding text baseline.
+3. **Orphan emoji past ellipsis.** Reply previews are single-line and
+   ellipsised (`PANGO_ELLIPSIZE_END`). The overlay code drew the bitmap at
+   the placeholder's *original* index even when that index was inside the
+   truncated tail — leaving the bitmap dangling in empty space to the right
+   of the "…".
 
-  *src/renderer.cpp*: `drawReply` now reads the first layout line's visible
-  byte range via `pango_layout_get_line_readonly(tl, 0)` and skips any emoji
-  whose `byteIndex >= line->start_index + line->length`. An additional
-  right-edge clamp catches any residual overflow.
+### The fix
 
-### Added
-* New `README.md` documenting the build, configuration, HTTP API, payload
-  schema, architecture, and troubleshooting.
-* This `CHANGELOG.md`.
+Custom emojis are now first-class glyphs in the Pango line, the way
+[tdesktop](https://github.com/telegramdesktop/tdesktop)'s `CustomEmojiBlock`
+treats them in `lib_ui/ui/text/text_block.cpp`:
+
+```
+// tdesktop, AbstractBlock::objectWidth():
+case TextBlockType::CustomEmoji:
+    return static_cast<const CustomEmojiBlock*>(this)->custom()->width();
+// and in the renderer:
+auto emojiY = (_t->_st->font->height - st::emojiSize) / 2;
+```
+
+Pango has a built-in mechanism for inline objects with author-controlled
+metrics: `pango_attr_shape_new`. We attach one shape attribute per custom
+emoji over the placeholder character's byte range, declaring the exact
+ink/logical rectangle the glyph occupies. Pango then:
+
+* reserves the correct horizontal space (end-of-line emojis wrap to the next
+  line instead of overflowing the bubble);
+* places the glyph on the baseline like any other glyph (no vertical drift);
+* picks the ellipsis cutoff *after* accounting for the emoji box, so a reply
+  preview will hide the emoji behind the "…" instead of leaking it.
+
+Painting is delegated to a `pango_cairo_context_set_shape_renderer` callback
+that pulls the resolved PNG path out of the shape attribute's user data and
+blits it into the reserved box. Centring, sizing and ellipsis handling all
+happen inside Pango — no second pass, no manual `index_to_pos`, no
+fudge-factor offsets.
+
+### Changed files
+
+* **`src/text_engine.cpp`** — `custom_emoji` entities no longer emit any
+  Pango markup span. The placeholder character is left in the layout text
+  exactly as Telegram sent it; the renderer now owns the reservation.
+* **`src/renderer.cpp`** — new `attachCustomEmojiShapes()` (adds the shape
+  attrs) and `shapeRenderer()` (paints the bitmap at the cairo *current
+  point* — i.e. the glyph baseline origin Pango sets up before invoking us).
+  Wired into both the measurement pass (so bubble width / wrap calculations
+  see the emoji boxes) and the paint pass for both body text and reply
+  previews. Removed the now-dead manual `index_to_pos`-based overlay code.
+
+### Side benefits
+
+* Fewer code paths: body text and reply text share the same emoji plumbing.
+* Bubble width auto-grows to fit the longest line including emojis, because
+  the measurement layout already accounts for them.
+* When the bitmap fetch fails (no entry in `emojiMap`), no shape attr is
+  added at all — Pango falls back to whatever the OS font shows for that
+  codepoint, which is a strictly better failure mode than the previous
+  "transparent box plus nothing painted on top".
 
 ### Unchanged
-* All other source files (`api_handler.cpp/h`, `main.cpp`, `tg_client.cpp/h`,
-  `mtproto/*`, `style_constants.h`, `text_engine.h`, `renderer.h`,
-  `CMakeLists.txt`, `Dockerfile*`, tests, prebuilt PNGs) were **not modified**.
+
+`api_handler.*`, `main.cpp`, `tg_client.*`, `mtproto/*`, `style_constants.h`,
+`renderer.h`, `text_engine.h`, `CMakeLists.txt`, `Dockerfile*`, tests,
+prebuilt PNGs — all untouched.
+
+### Documentation
+
+* `README.md` — full project docs, build instructions, HTTP API reference,
+  configuration matrix and an architecture diagram.
+* `docs/bug_before.png` / `docs/bug_after.png` — same payload rendered
+  through the old and new code, so the regression and its fix are easy to
+  eyeball at a glance.

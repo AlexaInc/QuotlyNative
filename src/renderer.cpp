@@ -7,6 +7,9 @@
 #include <iostream>
 #include <algorithm>
 #include <map>
+#include <memory>
+#include <string>
+#include <vector>
 #include <sys/stat.h>
 
 namespace Quote {
@@ -121,6 +124,155 @@ static const std::string& nameColor(int userId) {
     return kNameColors[std::abs(userId) % kNameColors.size()];
 }
 
+// ─── Custom-emoji-as-glyph plumbing (tdesktop-style) ────────────────────────
+//
+// tdesktop models a custom emoji as a CustomEmojiBlock that participates in
+// line layout exactly like a normal glyph: it has a fixed width
+// (emojiSize + 2*emojiPadding) and is drawn vertically centred on the line
+// (y = (font.height - emojiSize) / 2).
+//
+// The Pango equivalent is `pango_attr_shape_new`: attach a "shape" attribute
+// over the placeholder character's byte range, telling Pango the exact ink &
+// logical extents of the glyph. Pango then:
+//   • reserves the right amount of horizontal space (so end-of-line emojis
+//     wrap to the next line instead of overflowing the bubble),
+//   • places the glyph on the baseline like any other glyph (no vertical
+//     drift below the text line),
+//   • invokes our `shapeRenderer` callback at paint time so we can blit the
+//     downloaded emoji PNG into the reserved box.
+//
+// `pango_attr_shape_new_with_data` lets us stash arbitrary user data per
+// shape — we use it to pass the emoji's resolved image path through to the
+// renderer callback without a global table.
+
+namespace {
+
+struct ShapeEmoji {
+    std::string path;
+    double      size;       // px — bitmap will be rendered at size×size
+};
+
+static void shapeEmojiFree(gpointer data) {
+    delete static_cast<ShapeEmoji*>(data);
+}
+
+static gpointer shapeEmojiCopy(gconstpointer data) {
+    if (!data) return nullptr;
+    const auto* src = static_cast<const ShapeEmoji*>(data);
+    return new ShapeEmoji{src->path, src->size};
+}
+
+// Pango calls this for every shape attribute in the layout while the layout
+// is being painted with `pango_cairo_show_layout`. The CTM is already set up
+// so that (0,0) is the glyph's origin on the baseline.
+static void shapeRenderer(cairo_t*               cr,
+                          PangoAttrShape*        attr,
+                          gboolean               do_path,
+                          gpointer               /*user_data*/)
+{
+    if (do_path) return;                       // we don't contribute to text path
+    const auto* emoji = static_cast<const ShapeEmoji*>(attr->data);
+    if (!emoji || emoji->path.empty()) return;
+
+    // Pango sets the cairo *current point* to the glyph's baseline origin
+    // before invoking us; it does NOT translate the CTM. So the bitmap must
+    // be painted offset from that current point, not from (0, 0).
+    double baseX = 0, baseY = 0;
+    if (cairo_has_current_point(cr)) {
+        cairo_get_current_point(cr, &baseX, &baseY);
+    }
+
+    // attr->ink_rect.y is negative (baseline → ascender). Add baseX/baseY so
+    // the bitmap lands exactly inside the box Pango reserved for the glyph.
+    const double x = PANGO_PIXELS(attr->ink_rect.x);
+    const double y = PANGO_PIXELS(attr->ink_rect.y);
+    const double w = PANGO_PIXELS(attr->ink_rect.width);
+    const double h = PANGO_PIXELS(attr->ink_rect.height);
+    const double size = std::min(w, h);
+    // Centre horizontally inside the reserved cell (in case width > size due
+    // to padding).
+    const double cx = baseX + x + (w - size) / 2.0;
+    const double cy = baseY + y + (h - size) / 2.0;
+    drawEmojiSurface(cr, cx, cy, size, emoji->path);
+}
+
+// Add a `pango_attr_shape` for every custom emoji covering its UTF-8 byte
+// range, so the placeholder character is replaced (visually and metrically)
+// by a fixed-size box. `lineHeightPx` should be the font's full line height
+// — we use it as the shape's logical/ink height so the emoji centres on the
+// text line just like tdesktop's `(font.height - emojiSize) / 2` formula.
+static void attachCustomEmojiShapes(
+    PangoLayout*                                       layout,
+    const std::string&                                 plainText,
+    const std::vector<CustomEmoji>&                    emojis,
+    double                                             emojiSizePx,
+    const std::map<uint64_t, std::string>&             emojiMap)
+{
+    if (emojis.empty()) return;
+
+    // Resolve font metrics so we know how tall the line is going to be.
+    // We need this to centre the bitmap vertically on the baseline.
+    PangoContext*            ctx        = pango_layout_get_context(layout);
+    const PangoFontDescription* fontDesc = pango_layout_get_font_description(layout);
+    if (!fontDesc) fontDesc = pango_context_get_font_description(ctx);
+    PangoFontMetrics*        metrics    = pango_context_get_metrics(
+        ctx, fontDesc, pango_context_get_language(ctx));
+    const int ascentPU  = pango_font_metrics_get_ascent(metrics);   // pango units
+    const int descentPU = pango_font_metrics_get_descent(metrics);
+    pango_font_metrics_unref(metrics);
+
+    const int sizePU       = static_cast<int>(emojiSizePx * PANGO_SCALE);
+    const int paddingPU    = static_cast<int>(2 * PANGO_SCALE);     // 2px h-pad
+    // Box width = emoji + 2*padding; matches tdesktop's
+    //   objectWidth() = st::emojiSize + 2*st::emojiPadding
+    const int boxWidthPU   = sizePU + 2 * paddingPU;
+    // The shape's "height" in Pango is split as ascent-portion above the
+    // baseline and descent-portion below. We want the bitmap centred on the
+    // text x-height-ish region: anchor the top of the box at `ascent - size`
+    // (mirroring tdesktop's `(font.height - emojiSize) / 2`).
+    const int lineHeightPU = ascentPU + descentPU;
+    const int topGapPU     = std::max(0, (lineHeightPU - sizePU) / 2);
+    const int inkYPU       = -(ascentPU - topGapPU); // y is negative-up from baseline
+
+    PangoRectangle inkRect{0, inkYPU,         boxWidthPU, sizePU};
+    PangoRectangle logRect{0, -ascentPU,      boxWidthPU, lineHeightPU};
+
+    // Grab the existing attribute list (markup-derived bold/italic/etc) so we
+    // can merge our shape attrs into it without dropping the styling.
+    PangoAttrList* existing = pango_layout_get_attributes(layout);
+    PangoAttrList* attrs    = existing ? pango_attr_list_copy(existing)
+                                        : pango_attr_list_new();
+
+    const int textLen = static_cast<int>(plainText.size());
+    for (const auto& ce : emojis) {
+        auto it = emojiMap.find(ce.documentId);
+        if (it == emojiMap.end()) continue;          // bitmap unavailable
+        const int start = std::clamp<int>(ce.offset,             0, textLen);
+        const int end   = std::clamp<int>(ce.offset + ce.length, start, textLen);
+        if (end <= start) continue;
+
+        auto* userData = new ShapeEmoji{it->second, emojiSizePx};
+        PangoAttribute* shape = pango_attr_shape_new_with_data(
+            &inkRect, &logRect, userData, &shapeEmojiCopy, &shapeEmojiFree);
+        shape->start_index = static_cast<guint>(start);
+        shape->end_index   = static_cast<guint>(end);
+        pango_attr_list_insert(attrs, shape);        // takes ownership
+    }
+
+    pango_layout_set_attributes(layout, attrs);
+    pango_attr_list_unref(attrs);
+}
+
+// Convenience: install the shape renderer on whichever PangoContext the layout
+// is using. The callback is per-context, not per-layout, so this is idempotent
+// — calling it more than once just resets to the same function.
+static void installShapeRenderer(PangoLayout* layout) {
+    PangoContext* ctx = pango_layout_get_context(layout);
+    pango_cairo_context_set_shape_renderer(ctx, &shapeRenderer, nullptr, nullptr);
+}
+
+} // anonymous namespace
+
 void Renderer::measureLayout(PangoLayout* layout, int maxWidth, int& outWidth, int& outHeight) {
     pango_layout_set_width(layout, maxWidth * PANGO_SCALE);
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
@@ -188,42 +340,17 @@ void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const Re
     pango_layout_set_ellipsize(tl, PANGO_ELLIPSIZE_END);
     if (!reply.pangoMarkup.empty()) pango_layout_set_markup(tl, reply.pangoMarkup.c_str(), -1);
     else pango_layout_set_text(tl, reply.text.c_str(), -1);
+
+    // Inline custom emojis: 16px in reply previews to match Telegram's
+    // compact reply card. Shape attrs make Pango reserve real space, so
+    // ellipsis falls *after* the emoji box if the emoji is past the cutoff,
+    // and the bitmap is painted by Pango itself (no manual positioning).
+    attachCustomEmojiShapes(tl, reply.text, reply.customEmojis, 16.0, emojiMap);
+    installShapeRenderer(tl);
+
     cairo_set_source_rgba(cr, 0.8, 0.8, 0.8, 0.8);
     cairo_move_to(cr, x + 8, y + 18);
     pango_cairo_show_layout(cr, tl);
-    
-    if (!reply.customEmojis.empty()) {
-        // Reply previews are single-line and ellipsized. Determine the byte
-        // range that is actually visible so we don't draw emoji bitmaps over
-        // (or beyond) the ellipsis. (Bug fix: emojis used to leak past the
-        // truncated reply text and float into empty space outside the bubble.)
-        int visibleEnd = (int)reply.text.size();
-        PangoLayoutLine* firstLine = pango_layout_get_line_readonly(tl, 0);
-        if (firstLine) {
-            visibleEnd = firstLine->start_index + firstLine->length;
-        }
-        int layoutPxW = 0, layoutPxH = 0;
-        pango_layout_get_pixel_size(tl, &layoutPxW, &layoutPxH);
-
-        for (const auto& ce : reply.customEmojis) {
-            uint64_t eid = ce.documentId;
-            if (!emojiMap.count(eid)) continue;
-            int byteIndex = std::clamp(ce.offset, 0, (int)reply.text.size());
-            if (byteIndex >= visibleEnd) continue; // hidden behind ellipsis
-
-            PangoRectangle pos;
-            pango_layout_index_to_pos(tl, byteIndex, &pos);
-            double emojiSize = 16;
-            double cellW = std::max(emojiSize, (double)PANGO_PIXELS(pos.width));
-            double ex = x + 8 + PANGO_PIXELS(pos.x) + (cellW - emojiSize) / 2.0;
-            double lineH = std::max(emojiSize, (double)PANGO_PIXELS(pos.height));
-            double ey = y + 18 + PANGO_PIXELS(pos.y) + (lineH - emojiSize) / 2.0;
-
-            // Final safety clamp: never draw past the layout's right edge.
-            if (ex + emojiSize > x + 8 + layoutPxW) continue;
-            drawEmojiSurface(cr, ex, ey, emojiSize, emojiMap.at(eid));
-        }
-    }
 
     pango_font_description_free(nd); pango_font_description_free(td);
     g_object_unref(nl); g_object_unref(tl);
@@ -310,6 +437,7 @@ void Renderer::renderQuote(
     constexpr double kPhotoMinW    = 180;
     constexpr double kPhotoBorderR = 12; // thin border radius
     constexpr double kPhotoBorder  = 2;  // border thickness
+    constexpr double kInlineEmojiSize = 22; // px — body-text inline custom emoji
 
     struct MsgSize {
         double h;
@@ -353,6 +481,13 @@ void Renderer::renderQuote(
         pango_layout_set_font_description(tl, td);
         if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
         else pango_layout_set_text(tl, msg.text.c_str(), -1);
+
+        // Attach shape attributes for inline custom emojis BEFORE measuring,
+        // so width/wrap calculations include the reserved emoji boxes — that
+        // is the whole point of doing this Pango-side rather than overlaying
+        // bitmaps on top of an oblivious layout.
+        attachCustomEmojiShapes(tl, msg.text, msg.customEmojis, kInlineEmojiSize, emojiMap);
+
         int tw = 0, th = 0;
         bool hasText = !msg.text.empty() || !msg.pangoMarkup.empty();
         if (hasText) measureLayout(tl, maxTextWidth, tw, th);
@@ -581,7 +716,7 @@ void Renderer::renderQuote(
             py += sz.mediaH + (barePhotoRender ? 0 : 8);
         }
 
-        // ── Text with Inline Emojis ───────────────────────────────────────
+        // ── Text with Inline Emojis (via Pango shape attrs) ───────────────
         if (hasText) {
             PangoLayout* tl = pango_cairo_create_layout(cr);
             PangoFontDescription* td = pango_font_description_from_string("Inter 14");
@@ -591,45 +726,17 @@ void Renderer::renderQuote(
             if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
             else pango_layout_set_text(tl, msg.text.c_str(), -1);
 
+            // Inline custom emojis: handled exactly like tdesktop's
+            // CustomEmojiBlock — a real glyph in the line, properly sized
+            // (kInlineEmojiSize) and vertically centred on the baseline.
+            // The shape renderer callback paints our bitmap when Pango
+            // walks the layout.
+            attachCustomEmojiShapes(tl, msg.text, msg.customEmojis, kInlineEmojiSize, emojiMap);
+            installShapeRenderer(tl);
+
             cairo_set_source_rgb(cr, 1, 1, 1);
             cairo_move_to(cr, bubbleX + kPadLeft, py);
             pango_cairo_show_layout(cr, tl);
-
-            // ── Inline Emojis ─────────────────────────────────────────────
-            if (!msg.customEmojis.empty()) {
-                // The text engine reserves a wide cell for each custom emoji
-                // via `letter_spacing`, so Pango's line breaker has already
-                // accounted for the bitmap's footprint. We just need to centre
-                // the bitmap inside that reserved cell to keep visual rhythm.
-                // (Bug fix: previously the bitmap anchored to pos.x and could
-                // overflow the bubble on the right when the cell was wider
-                // than the placeholder glyph.)
-                for (const auto& ce : msg.customEmojis) {
-                    uint64_t eid = ce.documentId;
-                    if (!emojiMap.count(eid)) {
-                        std::cout << "[Renderer] Asset NOT in emojiMap: " << eid << std::endl;
-                        continue;
-                    }
-
-                    PangoRectangle pos;
-                    int byteIndex = std::clamp(ce.offset, 0, (int)msg.text.size());
-                    pango_layout_index_to_pos(tl, byteIndex, &pos);
-                    double emojiSize = 22;
-                    double cellW = std::max(emojiSize, (double)PANGO_PIXELS(pos.width));
-                    double ex = bubbleX + kPadLeft + PANGO_PIXELS(pos.x) + (cellW - emojiSize) / 2.0;
-                    double lineH = std::max(emojiSize, (double)PANGO_PIXELS(pos.height));
-                    double ey = py + PANGO_PIXELS(pos.y) + (lineH - emojiSize) / 2.0;
-
-                    // Safety clamp: never let the bitmap escape the bubble's
-                    // inner text rectangle.
-                    double rightEdge = bubbleX + sz.bubbleW - kPadRight;
-                    if (ex + emojiSize > rightEdge) {
-                        ex = rightEdge - emojiSize;
-                    }
-                    std::cout << "[Renderer] Drawing inline emoji " << eid << " at " << ex << ", " << ey << std::endl;
-                    drawEmojiSurface(cr, ex, ey, emojiSize, emojiMap.at(eid));
-                }
-            }
 
             g_object_unref(tl); pango_font_description_free(td);
         }
