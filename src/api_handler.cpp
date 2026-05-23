@@ -16,6 +16,8 @@
 #include <vector>
 #include <cstdlib>
 #include <cstdint>
+#include <cstdio>
+#include <cmath>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -130,6 +132,82 @@ static std::string saveBase64ToTemp(const std::string& b64Data, const std::strin
     std::ofstream ofs(path, std::ios::binary);
     ofs.write(decoded.data(), decoded.size());
     return path;
+}
+
+
+struct PngSize { int w = 0; int h = 0; };
+
+static PngSize readPngSize(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return {};
+    uint8_t sig[24]{};
+    if (fread(sig, 1, sizeof(sig), f) != sizeof(sig)) { fclose(f); return {}; }
+    fclose(f);
+    if (!(sig[0] == 0x89 && sig[1] == 'P' && sig[2] == 'N' && sig[3] == 'G')) return {};
+    int w = (sig[16] << 24) | (sig[17] << 16) | (sig[18] << 8) | sig[19];
+    int h = (sig[20] << 24) | (sig[21] << 16) | (sig[22] << 8) | sig[23];
+    return {w, h};
+}
+
+static std::string shellQuoteApi(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) out += (c == '\'') ? "'\\''" : std::string(1, c);
+    out += "'";
+    return out;
+}
+
+static bool runCwebpSticker(const std::string& inputPng,
+                            const std::string& outputWebp,
+                            int targetW,
+                            int targetH,
+                            const std::string& qualityArgs) {
+    std::string cmd = "cwebp -quiet " + qualityArgs + " -m 6 -metadata none";
+    if (targetW > 0 && targetH > 0) {
+        cmd += " -resize " + std::to_string(targetW) + " " + std::to_string(targetH);
+    }
+    cmd += " " + shellQuoteApi(inputPng) + " -o " + shellQuoteApi(outputWebp) + " >/dev/null 2>&1";
+    int rc = system(cmd.c_str());
+    return rc == 0 && std::filesystem::exists(outputWebp) && std::filesystem::file_size(outputWebp) > 0;
+}
+
+static std::string makeTelegramStickerWebp(const std::string& inputPng, double requestedMaxSide) {
+    // Telegram static stickers must fit inside a 512px box.  Keep the original
+    // renderer untouched, then make a safe WebP copy with high-quality cwebp
+    // resizing.  This avoids Telegram doing a rough conversion/resample later.
+    const int maxSide = (int)std::clamp(requestedMaxSide, 128.0, 512.0);
+    PngSize size = readPngSize(inputPng);
+
+    int targetW = 0;
+    int targetH = 0;
+    if (size.w > 0 && size.h > 0) {
+        if (size.w >= size.h) {
+            targetW = maxSide;
+            targetH = std::max(1, (int)std::lround((double)size.h * targetW / size.w));
+        } else {
+            targetH = maxSide;
+            targetW = std::max(1, (int)std::lround((double)size.w * targetH / size.h));
+        }
+    }
+
+    std::string webpPath = inputPng + ".sticker.webp";
+    if (runCwebpSticker(inputPng, webpPath, targetW, targetH, "-lossless -q 100") &&
+        std::filesystem::file_size(webpPath) <= 512 * 1024) {
+        return webpPath;
+    }
+
+    // If lossless exceeds Telegram's 512KB sticker limit (usually because of a
+    // photo inside the quote), retry lossy.  Text-only quotes normally stay on
+    // the first lossless path.
+    for (int q : {95, 90, 85, 80, 75, 65, 55, 45}) {
+        std::filesystem::remove(webpPath);
+        if (runCwebpSticker(inputPng, webpPath, targetW, targetH, "-q " + std::to_string(q)) &&
+            std::filesystem::file_size(webpPath) <= 512 * 1024) {
+            return webpPath;
+        }
+    }
+
+    std::filesystem::remove(webpPath);
+    return "";
 }
 
 void ApiHandler::setTgClient(const std::shared_ptr<TgClient>& tgClient) {
@@ -317,39 +395,32 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
         RenderOptions options;
         options.transparent = transparent;
         options.hasBubble = true;
-        // Default to Telegram-sticker-safe rendering because this API is
-        // commonly used by quote bots via sendSticker().  Pass
-        // {"telegramSticker":false} (or {"sticker":false}) to keep the
-        // old photo-style 1x output.
-        options.telegramSticker = body.value("telegramSticker",
-                                  body.value("sticker",
-                                  body.value("stickerMode", true)));
-        options.stickerMaxSide = body.value("stickerMaxSide", 512.0);
-        options.stickerDpiScale = body.value("stickerDpiScale", 2.0);
 
-        apiLog("[QuoteAPI] Rendering quote with " + std::to_string(emojiMap.size()) + " cached emojis" +
-               (options.telegramSticker ? " (telegram sticker mode)" : ""));
+        apiLog("[QuoteAPI] Rendering quote with " + std::to_string(emojiMap.size()) + " cached emojis");
         Renderer::renderQuote(outputPath, msgs, options, emojiMap);
 
-        // Optional lossless WebP response for bots that upload the bytes
-        // directly with sendSticker(). Telegram static stickers are WebP, so
-        // this avoids an extra lossy/server-side conversion step.
+        // Keep the original renderer exactly as-is.  Only after the PNG is
+        // created, optionally produce a Telegram static-sticker-safe WebP
+        // (<=512px on the longest side and <=512KB).
         std::string responsePath = outputPath;
         std::string contentType = "image/png";
         std::string format = body.value("format", body.value("outputFormat", std::string("png")));
         std::transform(format.begin(), format.end(), format.begin(),
                        [](unsigned char c) { return (char)std::tolower(c); });
-        bool wantWebp = body.value("webp", false) || format == "webp" || format == "sticker";
-        if (wantWebp) {
-            std::string webpPath = outputPath + ".webp";
-            std::string cmd = "cwebp -quiet -lossless -q 100 -m 6 \"" + outputPath + "\" -o \"" + webpPath + "\"";
-            int rc = system(cmd.c_str());
-            if (rc == 0 && std::filesystem::exists(webpPath) && std::filesystem::file_size(webpPath) > 0) {
+        bool wantStickerWebp = body.value("webp", false) ||
+                               body.value("telegramSticker", false) ||
+                               body.value("sticker", false) ||
+                               body.value("stickerMode", false) ||
+                               format == "webp" || format == "sticker";
+        if (wantStickerWebp) {
+            std::string webpPath = makeTelegramStickerWebp(outputPath, body.value("stickerMaxSide", 512.0));
+            if (!webpPath.empty()) {
                 responsePath = webpPath;
                 contentType = "image/webp";
                 tempFiles.push_back(webpPath);
+                apiLog("[QuoteAPI] Telegram sticker-safe WebP created: " + webpPath);
             } else {
-                apiLog("[QuoteAPI] cwebp conversion failed; falling back to PNG");
+                apiLog("[QuoteAPI] cwebp sticker conversion failed; falling back to PNG");
             }
         }
 
