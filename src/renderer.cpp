@@ -312,6 +312,7 @@ void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size,
                 cairo_translate(cr, cx - drawW / 2.0, cy - drawH / 2.0);
                 cairo_scale(cr, scale, scale);
                 cairo_set_source_surface(cr, img, 0, 0);
+                cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BEST);
                 cairo_paint(cr);
                 cairo_restore(cr);
 
@@ -444,6 +445,7 @@ static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const
             cairo_translate(cr, x, y);
             cairo_scale(cr, size / iw, size / ih);
             cairo_set_source_surface(cr, img, 0, 0);
+            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BEST);
             cairo_paint(cr);
             cairo_restore(cr);
         }
@@ -638,10 +640,22 @@ void Renderer::renderQuote(
 
     cairo_destroy(measure_cr); cairo_surface_destroy(measure_surf);
 
-    cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, (int)ceil(canvasW), (int)ceil(canvasH));
+    const double outputScale = std::clamp(options.outputScale, 1.0, 5.0);
+    const int surfaceW = std::max(1, (int)ceil(canvasW * outputScale));
+    const int surfaceH = std::max(1, (int)ceil(canvasH * outputScale));
+
+    cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, surfaceW, surfaceH);
     cairo_t* cr = cairo_create(surface);
+
+    cairo_font_options_t* fontOptions = cairo_font_options_create();
+    cairo_font_options_set_antialias(fontOptions, CAIRO_ANTIALIAS_BEST);
+    cairo_font_options_set_hint_style(fontOptions, CAIRO_HINT_STYLE_FULL);
+    cairo_set_font_options(cr, fontOptions);
+    cairo_font_options_destroy(fontOptions);
+
     if (options.transparent) { cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE); cairo_set_source_rgba(cr, 0, 0, 0, 0); cairo_paint(cr); }
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    if (outputScale != 1.0) cairo_scale(cr, outputScale, outputScale);
 
     double curY = kCanvasPad;
     double bubbleX = kCanvasPad + kAvatarSize + kAvatarMarginRight;
@@ -678,6 +692,7 @@ void Renderer::renderQuote(
                 cairo_scale(cr, sw / cairo_image_surface_get_width(image),
                                 sh / cairo_image_surface_get_height(image));
                 cairo_set_source_surface(cr, image, 0, 0);
+                cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BEST);
                 cairo_paint(cr);
                 cairo_restore(cr);
             } else {
@@ -781,6 +796,7 @@ void Renderer::renderQuote(
                 cairo_scale(cr, pw / cairo_image_surface_get_width(image),
                                 ph / cairo_image_surface_get_height(image));
                 cairo_set_source_surface(cr, image, 0, 0);
+                cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BEST);
                 cairo_paint(cr);
                 cairo_restore(cr);
             } else {
