@@ -551,23 +551,19 @@ void Renderer::renderQuote(
         double replyH = msg.reply.hasReply ? 40 : 0;
         double photoH = 0;
         double photoW = 0;
+        ImageSize photoSize;
         bool barePHoto = isPhoto && !msg.photoPath.empty() && !hasText;
         if (isPhoto && !msg.photoPath.empty()) {
-            ImageSize isz = getImageSize(msg.photoPath);
-            fitMediaIntoBounds(isz, kPhotoMaxW, kPhotoMaxH, kPhotoMinW,
+            photoSize = getImageSize(msg.photoPath);
+            fitMediaIntoBounds(photoSize, kPhotoMaxW, kPhotoMaxH, kPhotoMinW,
                                kPhotoMaxW, kPhotoMaxH, photoW, photoH);
         }
 
         if (hasText) {
-            // Telegram-style caption layout: when a photo has a caption, the
-            // caption wraps to the media width and the bubble is tied to the
-            // media instead of becoming much wider than the image. This avoids
-            // the off-centre photo / oversized bubble look.
-            int textMeasureW = maxTextWidth;
-            if (isPhoto && photoW > 0) {
-                textMeasureW = (int)std::max(1.0, photoW - kPadLeft - kPadRight);
-            }
-            measureLayout(tl, textMeasureW, tw, th);
+            // First measure at the normal Telegram message width. Do not force
+            // captions to the small thumbnail width: that made a 6-line
+            // Telegram caption become 10+ lines in quote output.
+            measureLayout(tl, maxTextWidth, tw, th);
         }
 
         double contentW = (double)tw;
@@ -576,15 +572,46 @@ void Renderer::renderQuote(
             contentW = photoW;
             msgW = photoW;
         } else if (isPhoto && photoW > 0) {
-            // For captioned photos the media itself defines the bubble width;
-            // text/name/reply may widen it, but photo width is not padded
-            // twice. The image is centred later if name/reply is wider.
-            msgW = std::max({photoW, (double)tw + kPadLeft + kPadRight, nameW + kPadLeft + kPadRight,
-                             (double)(msg.reply.hasReply ? 150 : 0) + kPadLeft + kPadRight});
+            // Telegram-style captioned media: if caption/name/reply needs more
+            // width, expand the displayed image up to the bubble width instead
+            // of leaving a narrow image inside a wide bubble. This keeps the
+            // bubble visually fixed to the image while preserving caption line
+            // count close to Telegram.
+            const double captionNeededW = std::max({
+                photoW,
+                (double)tw + kPadLeft + kPadRight,
+                nameW + kPadLeft + kPadRight,
+                (double)(msg.reply.hasReply ? 150 : 0) + kPadLeft + kPadRight
+            });
+            double desiredPhotoW = std::clamp(captionNeededW, kPhotoMinW, kMsgMaxWidth);
+            if (photoSize.w > 0 && photoSize.h > 0 && desiredPhotoW > photoW) {
+                double desiredPhotoH = desiredPhotoW * (double)photoSize.h / (double)photoSize.w;
+                if (desiredPhotoH > kPhotoMaxH) {
+                    desiredPhotoW = std::max(photoW, kPhotoMaxH * (double)photoSize.w / (double)photoSize.h);
+                    desiredPhotoH = desiredPhotoW * (double)photoSize.h / (double)photoSize.w;
+                }
+                photoW = desiredPhotoW;
+                photoH = desiredPhotoH;
+            }
+
+            msgW = std::max({
+                photoW,
+                (double)tw + kPadLeft + kPadRight,
+                nameW + kPadLeft + kPadRight,
+                (double)(msg.reply.hasReply ? 150 : 0) + kPadLeft + kPadRight
+            });
+            msgW = std::clamp(msgW, kMsgMinWidth, kMsgMaxWidth);
+
+            // Re-measure after the final bubble/media width is known. This is
+            // what reduces the accidental extra wrapping in long captions.
+            if (hasText) {
+                int finalTextW = (int)std::max(1.0, msgW - kPadLeft - kPadRight);
+                measureLayout(tl, finalTextW, tw, th);
+            }
         } else {
             msgW = std::max({contentW, nameW, (double)(msg.reply.hasReply ? 150 : 0)}) + kPadLeft + kPadRight;
+            msgW = std::clamp(msgW, kMsgMinWidth, kMsgMaxWidth);
         }
-        msgW = std::clamp(msgW, barePHoto ? 1.0 : kMsgMinWidth, kMsgMaxWidth);
         maxW = std::max(maxW, barePHoto ? 0.0 : msgW);
 
         double msgH = barePHoto
