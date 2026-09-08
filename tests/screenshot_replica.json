@@ -1,0 +1,26 @@
+{
+  "transparent": false,
+  "messages": [
+    {
+      "text": "Good evening",
+      "from": {
+        "id": 4242,
+        "first_name": "Hasii",
+        "emoji_status_custom_emoji_id": "5210956306952758910"
+      },
+      "reply_to": {
+        "text": "Kala bilada dan",
+        "from": { "id": 555, "first_name": "Shashika" }
+      },
+      "timeString": "5:16 PM"
+    },
+    {
+      "text": "😂 ow sakada ahnna 🎀 Plyām",
+      "entities": [
+        { "offset": 19, "length": 2, "type": "custom_emoji", "custom_emoji_id": "5233605022419270727" }
+      ],
+      "from": { "id": 777, "first_name": "MiZ", "last_name": "Ki" },
+      "timeString": "5:16 PM"
+    }
+  ]
+}

@@ -55,6 +55,7 @@ struct MessageData {
     MediaType   mediaType   = MediaType::None;
     uint64_t    emojiStatusId = 0;     // custom emoji status ID
     std::vector<CustomEmoji> customEmojis;
+    std::string timeString;            // optional "5:16 PM"-style timestamp
 };
 
 struct RenderOptions {

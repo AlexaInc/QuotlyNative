@@ -12,10 +12,31 @@ find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 
+# Header-only dependencies (Crow / Asio / nlohmann-json). These used to fail
+# with a cryptic "asio.hpp: No such file or directory" deep inside crow.h —
+# now we fail fast at configure time with the exact fix.
+find_path(CROW_INCLUDE_DIR crow.h PATHS /usr/local/include /usr/include)
+if(NOT CROW_INCLUDE_DIR)
+    message(FATAL_ERROR "crow.h not found. Fix:\n"
+            "  sudo wget -O /usr/local/include/crow.h "
+            "https://github.com/CrowCpp/Crow/releases/download/v1.2.0/crow_all.h")
+endif()
+find_path(ASIO_INCLUDE_DIR asio.hpp PATHS /usr/include /usr/local/include)
+if(NOT ASIO_INCLUDE_DIR)
+    message(FATAL_ERROR "asio.hpp not found. Fix: sudo apt-get install libasio-dev")
+endif()
+find_path(NLOHMANN_INCLUDE_DIR nlohmann/json.hpp PATHS /usr/include /usr/local/include)
+if(NOT NLOHMANN_INCLUDE_DIR)
+    message(FATAL_ERROR "nlohmann/json.hpp not found. Fix: sudo apt-get install nlohmann-json3-dev")
+endif()
+
 # Include directories
 include_directories(
     ${CAIRO_INCLUDE_DIRS}
     ${PANGO_INCLUDE_DIRS}
+    ${CROW_INCLUDE_DIR}
+    ${ASIO_INCLUDE_DIR}
+    ${NLOHMANN_INCLUDE_DIR}
     src
 )
 

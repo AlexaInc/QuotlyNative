@@ -22,6 +22,8 @@ for fetching premium-emoji bitmaps directly from Telegram.
 | Inline media | Photos (with caption layout) and stickers (bare, rounded thumbnail) |
 | Multi-message threads | Author grouping, avatar shown only on last bubble of a group |
 | Avatars | Initials-based fallback colored by Telegram's 7-color palette |
+| Timestamps | Optional Telegram-style time at the bubble's bottom-right (inline on the last text line when it fits, own line otherwise; overlaid on bare photos) |
+| Sinhala / complex scripts | Deterministic font fallback (`Inter, Noto Sans, Noto Sans Sinhala`) so Sinhala conjuncts shape with Noto Sans Sinhala instead of fontconfig's legacy LKLUG pick |
 | Transparent PNG output | Switchable via the request payload |
 | HTTP API | `POST /quote` and `POST /api/generate` (JS-compat alias) |
 | Pre-baked MTProto session | `--gen-auth-key` / `--load-auth-key` to bypass IP-reputation issues on PaaS |
@@ -75,9 +77,19 @@ sudo apt-get install \
     build-essential cmake pkg-config \
     libcairo2-dev libpango1.0-dev \
     libssl-dev libboost-system-dev zlib1g-dev \
-    nlohmann-json3-dev
-# Crow is header-only — drop crow.h into /usr/local/include or vendor it.
+    nlohmann-json3-dev libasio-dev
+# Crow is header-only:
+sudo wget -O /usr/local/include/crow.h \
+    https://github.com/CrowCpp/Crow/releases/download/v1.2.0/crow_all.h
 ```
+
+`cmake` now fails fast with the exact install command if `crow.h`,
+`asio.hpp` or `nlohmann/json.hpp` are missing (previously the build died
+deep inside `crow.h` with a cryptic `asio.hpp: No such file or directory`).
+
+For correct Sinhala rendering the runtime needs `Noto Sans Sinhala`
+(e.g. `fonts-noto-core`); the renderer's font fallback list picks it
+automatically for Sinhala codepoints.
 
 ### Compile
 
@@ -163,7 +175,12 @@ Response: `image/png` binary.
   pick a name color.
 * **`from.first_name` / `from.last_name`** — Displayed as `"First Last"`.
 * **`from.emoji_status_custom_emoji_id`** *(string)* — Drawn at 20 px next to
-  the sender name.
+  the sender name. The bubble is widened by the badge width, so long
+  name + badge never overflows the bubble's right edge.
+* **`timeString` / `time`** *(string)* — Ready-made timestamp text, drawn
+  Telegram-style at the bottom-right (e.g. `"5:16 PM"`).
+* **`date`** *(int epoch seconds)* — Alternative to `timeString`; formatted
+  as `H:MM AM/PM` in server-local time.
 * **`reply_to.text` / `reply_to.from` / `reply_to.entities`** — Renders a
   single-line reply preview with accent bar in the sender's name color.
 * **`mediaBase64`** *(`data:image/...;base64,...`)* — Inline photo or sticker.

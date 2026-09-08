@@ -34,6 +34,28 @@ constexpr double kNameFontSize  = 13.0;
 // ── Body text ────────────────────────────────────────────────────────────────
 constexpr double kTextFontSize = 14.0;
 
+// ── Font family fallback list ────────────────────────────────────────────────
+// The order matters and is deliberate:
+//   1. Inter            — the intended UI face (Latin), when installed.
+//   2. Noto Sans        — deterministic Latin fallback (also what Inter
+//                         metrics were designed against).
+//   3. Noto Sans Sinhala — MUST be listed explicitly. Without it, fontconfig
+//                         resolves Sinhala codepoints to the legacy "LKLUG"
+//                         font, which breaks conjuncts (න්‍ය, ක්‍ෂ …) and adds
+//                         wide gaps around ZWJ clusters at chat sizes.
+// Emoji are intentionally NOT listed here: putting "Noto Color Emoji" in the
+// family list makes fontconfig hijack ASCII digits for the emoji font. Pango's
+// global fallback already routes 🙂/✨ to the color emoji font correctly.
+const std::string kFontFamily = "Inter, Noto Sans, Noto Sans Sinhala";
+
+// ── Emoji status (premium badge next to the sender name) ────────────────────
+constexpr double kEmojiStatusSize = 20.0;
+constexpr double kEmojiStatusGap  = 4.0;
+
+// ── Timestamp (bottom-right, Telegram style) ─────────────────────────────────
+constexpr double kTimeFontSize = 11.0;
+constexpr double kTimeGap      = 6.0;  // horizontal gap when inline with text
+
 // ── Avatar ───────────────────────────────────────────────────────────────────
 constexpr double kAvatarSize       = 42.0;
 constexpr double kAvatarMarginRight = 8.0;
