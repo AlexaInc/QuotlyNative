@@ -7,7 +7,10 @@ typography and **Crow** for the HTTP API, with an embedded **MTProto** client
 for fetching premium-emoji bitmaps directly from Telegram.
 
 > Drop-in replacement for the JavaScript [`quote-api`](https://github.com/LyoSU/quote-api)
-> service, but ~10× faster and an order of magnitude lighter on memory.
+> service — measured **28–66× faster per request**, **18–23× higher throughput**
+> and **~19× lighter on memory** on identical payloads. Full methodology and
+> raw data in [Benchmarks](#benchmarks-measured); the original project is
+> credited in [Credits & Acknowledgments](#credits--acknowledgments).
 
 ---
 
@@ -21,12 +24,65 @@ for fetching premium-emoji bitmaps directly from Telegram.
 | Reply previews | Single-line, ellipsised, with name color and custom-emoji support |
 | Inline media | Photos (with caption layout) and stickers (bare, rounded thumbnail) |
 | Multi-message threads | Author grouping, avatar shown only on last bubble of a group |
-| Avatars | Initials-based fallback colored by Telegram's 7-color palette |
+| Avatars | Real photo avatars from `avatarBase64` (JPEG/PNG/BMP/GIF, decoded natively and content-sniffed — a JPEG mislabeled `image/png` still renders); initials-on-colour fallback via Telegram's 7-color palette |
+| Native image decoding | `stb_image`-based loader — no ImageMagick required at runtime; `dwebp`/`ffmpeg` only for webp/tgs/webm/mp4 |
 | Timestamps | Optional Telegram-style time at the bubble's bottom-right (inline on the last text line when it fits, own line otherwise; overlaid on bare photos) |
 | Sinhala / complex scripts | Deterministic font fallback (`Inter, Noto Sans, Noto Sans Sinhala`) so Sinhala conjuncts shape with Noto Sans Sinhala instead of fontconfig's legacy LKLUG pick |
 | Transparent PNG output | Switchable via the request payload |
 | HTTP API | `POST /quote` and `POST /api/generate` (JS-compat alias) |
 | Pre-baked MTProto session | `--gen-auth-key` / `--load-auth-key` to bypass IP-reputation issues on PaaS |
+
+---
+
+## 📊 Benchmarks (measured)
+
+The speed / memory claim in the intro is backed by the numbers below,
+produced by `bench/run_benchmark.py` (raw data: `bench/results.json`,
+chart: `bench/make_charts.py` → `docs/benchmark.png`):
+
+![QuotlyNative vs quote-api benchmark](docs/benchmark.png)
+
+**Request latency, mean (p95), ms — identical message content, real renders:**
+
+| Payload | QuotlyNative (C++) | quote-api JS, scale=1 | quote-api JS, scale=2 (its default) |
+|---|---|---|---|
+| **S** — 1 message | **2.1** (2.6) | 120 (140) | 140 (156) |
+| **M** — 3 messages, entities + reply | **9.8** (10.4) | 344 (376) | 423 (490) |
+| **L** — 5 messages, entities + reply + Sinhala | **17.0** (19.0) | 478 (519) | 598 (643) |
+
+| | QuotlyNative (C++) | quote-api JS |
+|---|---|---|
+| Throughput, 4 concurrent clients (M payload) | **101.6 req/s** | 5.5 req/s (scale 1) / 4.4 req/s (scale 2) |
+| Peak memory under load (`VmHWM`) | **21 MB** | 387 MB |
+
+### Methodology & fairness notes
+
+* Both services rendered the **same message content**; each received the
+  payload in its own native schema (`POST /quote` vs `POST /generate`) —
+  that is the drop-in scenario.
+* quote-api ships a 45-minute LRU **response cache** keyed on the whole
+  request body (`methods/index.js`); cache hits answer in ~1 ms and would
+  not compare like with like. Every benchmark request therefore carries a
+  unique `benchNonce` field (never rendered) so **both** services perform a
+  real render on every request.
+* quote-api's 20 req / 55 s rate limiter was whitelisted through its own
+  `botToken` mechanism; neither side was throttled.
+* JS was measured at `scale=1` and at its default `scale=2`; the C++
+  service renders at its fixed native scale.
+* Same host (2 vCPU / 2 GB RAM), localhost HTTP, sequential client, 2
+  warm-up renders per variant, then 20 measured iterations; peak RSS read
+  from `/proc/<pid>/status` after the identical load, on freshly started
+  servers.
+* JS reference build: [`LyoSU/quote-api` master @
+  `6f91434`](https://github.com/LyoSU/quote-api/tree/6f91434c8d22fda57bb2d7ad452a9b45f2b35f21).
+
+Reproduce on your own machine:
+
+```bash
+# terminal 1: this repo  -> :7860     terminal 2: quote-api -> :3000
+python3 bench/run_benchmark.py     # writes bench/results.json
+python3 bench/make_charts.py       # renders docs/benchmark.png
+```
 
 ---
 
@@ -186,7 +242,10 @@ Response: `image/png` binary.
 * **`mediaBase64`** *(`data:image/...;base64,...`)* — Inline photo or sticker.
 * **`mediaType`** *(string)* — `"photo"` or `"sticker"`. Inferred from
   `mediaBase64` MIME if omitted.
-* **`avatarBase64`** — Reserved (renderer currently uses initials only).
+* **`avatarBase64`** *(`data:image/...;base64,...`)* — Real photo avatar,
+  clipped to a circle. The container is sniffed from the bytes, so payloads
+  with a wrong MIME (e.g. `image/png` wrapping JPEG bytes) still render the
+  photo; undecodable input falls back to the initials circle.
 * **`transparent`** *(bool, top-level)* — Set to `false` for an opaque
   background.
 
@@ -298,6 +357,34 @@ python3 tests/verify_api.py
 The repository also ships a few pre-rendered reference PNGs at the root
 (`test_Full_Premium.png`, `test_Multi_Message_Mixed.png`, …) so you can
 eyeball regressions without running the server.
+
+---
+
+## 🙏 Credits & Acknowledgments
+
+* **[LyoSU/quote-api](https://github.com/LyoSU/quote-api)** (MIT, by
+  [@LyoSU](https://github.com/LyoSU)) — the original JavaScript service
+  that this project is a native reimplementation of. The HTTP API shape
+  (`/api/generate`, the `messages` / `from` / `entities` / `replyMessage`
+  object model, the `transparent` flag, UTF-16 entity offsets) and the
+  visual feature checklist (bubbles, sender grouping, reply previews,
+  media, emoji statuses) were deliberately kept compatible so existing
+  bots can switch backends without code changes. All benchmarks above were
+  run against upstream master, and its response-cache behaviour is
+  documented in the methodology notes. Thank you, LyoSU, for the reference
+  implementation. 🙇
+* **[telegramdesktop/tdesktop](https://github.com/telegramdesktop/tdesktop)**
+  — reference for bubble geometry, the sender-name color palette and the
+  custom-emoji-as-glyph model (`CustomEmojiBlock`) that this renderer
+  mirrors with `pango_attr_shape_new`.
+* **[stb_image](https://github.com/nothings/stb)** (public domain,
+  single-header) — the dependency-free JPEG/PNG/BMP/GIF decoder behind
+  `src/image_decode.cpp`.
+* **Cairo / Pango / HarfBuzz** — the typography and rasterization stack;
+  the Sinhala shaping quality is theirs.
+* **Crow** (header-only) + standalone **Asio** — the HTTP layer.
+* **Inter / Noto / Noto Sans Sinhala** font families — the metric and
+  fallback references used by `Style::kFontFamily`.
 
 ---
 
