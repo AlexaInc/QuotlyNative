@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased — Layout & script fixes (premium badge width, Sinhala fonts, timestamps)
+
+### Premium / emoji-status badge overflowed the bubble
+
+The measure pass computed the sender-name width from the name text only and
+the draw pass then painted the 20 px emoji-status badge *after* it. With a
+long name the badge landed outside the bubble's right wall (see the
+"hansaka rasanjana ⭐" reference render). The measure pass now reserves
+`kEmojiStatusGap + kEmojiStatusSize` whenever the badge will be drawn, and
+the draw pass uses the same `Style` constants instead of hard-coded `4`/`20`,
+so bubble width and badge position can never disagree again.
+
+### Sinhala rendered with broken conjuncts ("ugly characters")
+
+With the font description set to `Inter`, Pango's fontconfig fallback
+resolved Sinhala codepoints to the legacy **LKLUG** font, which does not
+shape modern conjuncts (න්‍ය, ක්‍ෂ, …) correctly at chat sizes — clusters came
+out with wide gaps and decomposed marks. All font descriptions now use the
+fallback list `Inter, Noto Sans, Noto Sans Sinhala` (`Style::kFontFamily`),
+which pins Sinhala runs to Noto Sans Sinhala (verified run-by-run with a
+Pango itemization probe) while Latin still uses Inter where installed.
+`Noto Color Emoji` is deliberately *not* in the list: putting it there makes
+fontconfig hijack ASCII digits for the emoji font.
+
+### Optional Telegram-style timestamps
+
+New payload fields `timeString` / `time` (ready-made text) or `date`
+(unix epoch, formatted `H:MM AM/PM`). The time is right-aligned on the last
+text line when it fits next to it (measured at the exact draw width so the
+measure and draw passes always agree), otherwise on its own line below the
+text; on bare photos it is overlaid on the photo's bottom-right corner,
+matching Telegram.
+
+### Build ergonomics
+
+`CMakeLists.txt` now checks for `crow.h`, `asio.hpp` and
+`nlohmann/json.hpp` at configure time and prints the exact install command
+when one is missing, instead of failing with
+`fatal error: asio.hpp: No such file or directory` inside `crow.h`.
+
+New test assets: `tests/make_assets.py` (generates offline emoji bitmaps +
+a sample photo), `tests/repro_premium_star.json`, `tests/repro_sinhala.json`,
+`tests/screenshot_replica.json`.
+
 ## Unreleased — Custom emoji rendering rewrite (tdesktop-style inline glyphs)
 
 ### The bug

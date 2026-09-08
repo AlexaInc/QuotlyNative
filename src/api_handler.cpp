@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cmath>
+#include <ctime>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -331,6 +332,27 @@ crow::response ApiHandler::handleQuoteRequest(const crow::request& req) {
                                 parseUInt64Json(item, "emoji_status_custom_emoji_id", 0)));
             if (item.contains("from") && item["from"].is_object()) {
                 msg.emojiStatusId = parseUInt64Json(item["from"], "emoji_status_custom_emoji_id", msg.emojiStatusId);
+            }
+
+            // ── Optional timestamp (Telegram-style, bottom-right) ──────────
+            // Accepts a ready-made string ("time"/"timeString") or a unix
+            // epoch ("date"), formatted like Telegram's "5:16 PM".
+            msg.timeString = item.value("timeString", item.value("time", ""));
+            if (msg.timeString.empty() && item.contains("date") && !item["date"].is_null()) {
+                long long epoch = 0;
+                const auto& d = item["date"];
+                if (d.is_number()) epoch = (long long)d.get<double>();
+                else if (d.is_string()) { try { epoch = std::stoll(d.get<std::string>()); } catch (...) {} }
+                if (epoch > 0) {
+                    time_t t = (time_t)epoch;
+                    struct tm tmv{};
+                    localtime_r(&t, &tmv);
+                    char buf[32]{};
+                    std::strftime(buf, sizeof(buf), "%I:%M %p", &tmv);
+                    std::string s(buf);
+                    if (s.size() > 1 && s[0] == '0') s.erase(0, 1); // "05:16 PM" → "5:16 PM"
+                    msg.timeString = s;
+                }
             }
 
             if (entities.is_array()) {

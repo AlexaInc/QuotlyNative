@@ -15,6 +15,34 @@
 namespace Quote {
 static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const std::string& path);
 
+// ── Timestamp helpers ────────────────────────────────────────────────────────
+static void measureTimestamp(cairo_t* cr, const std::string& text, double& w, double& h) {
+    using namespace Style;
+    w = h = 0;
+    if (text.empty()) return;
+    PangoLayout* l = pango_cairo_create_layout(cr);
+    PangoFontDescription* d = pango_font_description_from_string((kFontFamily + " 11").c_str());
+    pango_layout_set_font_description(l, d);
+    pango_layout_set_text(l, text.c_str(), -1);
+    int iw = 0, ih = 0;
+    pango_layout_get_pixel_size(l, &iw, &ih);
+    w = iw; h = ih;
+    g_object_unref(l); pango_font_description_free(d);
+}
+
+static void drawTimestamp(cairo_t* cr, double x, double y, const std::string& text, double alpha) {
+    using namespace Style;
+    if (text.empty()) return;
+    PangoLayout* l = pango_cairo_create_layout(cr);
+    PangoFontDescription* d = pango_font_description_from_string((kFontFamily + " 11").c_str());
+    pango_layout_set_font_description(l, d);
+    pango_layout_set_text(l, text.c_str(), -1);
+    cairo_set_source_rgba(cr, 1, 1, 1, alpha);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, l);
+    g_object_unref(l); pango_font_description_free(d);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 struct RGBA { double r, g, b, a; };
@@ -337,7 +365,7 @@ void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size,
     }
     if (!initials.empty()) {
         PangoLayout* layout = pango_cairo_create_layout(cr);
-        PangoFontDescription* desc = pango_font_description_from_string("Inter 15");
+        PangoFontDescription* desc = pango_font_description_from_string((kFontFamily + " 15").c_str());
         pango_font_description_set_weight(desc, PANGO_WEIGHT_MEDIUM);
         pango_layout_set_font_description(layout, desc);
         pango_layout_set_text(layout, initials.c_str(), -1);
@@ -365,7 +393,7 @@ void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const Re
 
     // Name
     PangoLayout* nl = pango_cairo_create_layout(cr);
-    PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 12");
+    PangoFontDescription* nd = pango_font_description_from_string((kFontFamily + " Bold 12").c_str());
     pango_layout_set_font_description(nl, nd);
     pango_layout_set_text(nl, reply.senderName.c_str(), -1);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a); // Reply name uses sender color
@@ -374,7 +402,7 @@ void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const Re
 
     // Text
     PangoLayout* tl = pango_cairo_create_layout(cr);
-    PangoFontDescription* td = pango_font_description_from_string("Inter 12");
+    PangoFontDescription* td = pango_font_description_from_string((kFontFamily + " 12").c_str());
     pango_layout_set_font_description(tl, td);
     pango_layout_set_width(tl, (width - 12) * PANGO_SCALE);
     pango_layout_set_ellipsize(tl, PANGO_ELLIPSIZE_END);
@@ -488,6 +516,9 @@ void Renderer::renderQuote(
         double mediaH;
         double bubbleW;
         bool isSticker;
+        double timeH     = 0;
+        bool   timeInline = false;
+        bool   hasTime   = false;
     };
     std::vector<MsgSize> sizes;
     double totalH = 0;
@@ -510,14 +541,14 @@ void Renderer::renderQuote(
             double sw = 0, sh = 0;
             fitMediaIntoBounds(isz, kStickerMaxW, kStickerMaxH, kStickerMinW,
                                kStickerMaxW, kStickerMaxH, sw, sh);
-            sizes.push_back({sh + 8, 0, 0, 0, sw, sh, sw, true});
+            sizes.push_back({sh + 8, 0, 0, 0, sw, sh, sw, true, 0, false, false});
             maxW = std::max(maxW, sw + kPadLeft + kPadRight);
             totalH += (sh + 8) + 8; // inter-message gap
             continue;
         }
 
         PangoLayout* tl = pango_cairo_create_layout(measure_cr);
-        PangoFontDescription* td = pango_font_description_from_string("Inter 14");
+        PangoFontDescription* td = pango_font_description_from_string((kFontFamily + " 14").c_str());
         pango_layout_set_font_description(tl, td);
         if (!msg.pangoMarkup.empty()) pango_layout_set_markup(tl, msg.pangoMarkup.c_str(), -1);
         else pango_layout_set_text(tl, msg.text.c_str(), -1);
@@ -540,12 +571,19 @@ void Renderer::renderQuote(
 
         if (showName) {
             PangoLayout* nl = pango_cairo_create_layout(measure_cr);
-            PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 13");
+            PangoFontDescription* nd = pango_font_description_from_string((kFontFamily + " Bold 13").c_str());
             pango_layout_set_font_description(nl, nd);
             pango_layout_set_text(nl, msg.senderName.c_str(), -1);
             int nw, nh; pango_layout_get_pixel_size(nl, &nw, &nh);
             nameH = nh + kNamePadTop + kNamePadBottom; nameW = nw;
             g_object_unref(nl); pango_font_description_free(nd);
+
+            // The premium/emoji-status badge is painted right after the name;
+            // reserve its width here too, otherwise a long name + badge makes
+            // the badge bleed past the bubble's right edge.
+            if (msg.emojiStatusId != 0 && emojiMap.count(msg.emojiStatusId)) {
+                nameW += kEmojiStatusGap + kEmojiStatusSize;
+            }
         }
 
         double replyH = msg.reply.hasReply ? 40 : 0;
@@ -614,10 +652,40 @@ void Renderer::renderQuote(
         }
         maxW = std::max(maxW, barePHoto ? 0.0 : msgW);
 
+        // ── Timestamp metrics ────────────────────────────────────────────
+        // Telegram right-aligns the time on the last text line when it fits,
+        // otherwise on its own line below the text. Decide that here, at the
+        // SAME layout width the draw pass will use, so both passes agree.
+        const bool hasTime = !msg.timeString.empty();
+        double timeW = 0, timeH = 0;
+        bool timeInline = false;
+        if (hasTime && !barePHoto) {
+            PangoLayout* tml = pango_cairo_create_layout(measure_cr);
+            PangoFontDescription* tmd = pango_font_description_from_string((kFontFamily + " 11").c_str());
+            pango_layout_set_font_description(tml, tmd);
+            pango_layout_set_text(tml, msg.timeString.c_str(), -1);
+            int tmw = 0, tmh = 0;
+            pango_layout_get_pixel_size(tml, &tmw, &tmh);
+            timeW = tmw; timeH = tmh;
+            g_object_unref(tml); pango_font_description_free(tmd);
+
+            if (hasText) {
+                const double textAreaW = msgW - kPadLeft - kPadRight;
+                measureLayout(tl, (int)std::max(1.0, textAreaW), tw, th);
+                const int lc = pango_layout_get_line_count(tl);
+                PangoLayoutLine* ll = pango_layout_get_line_readonly(tl, lc - 1);
+                PangoRectangle le{};
+                pango_layout_line_get_extents(ll, nullptr, &le);
+                const double lastLineW = PANGO_PIXELS_CEIL(le.width);
+                timeInline = (lastLineW + kTimeGap + timeW) <= textAreaW;
+            }
+        }
+
         double msgH = barePHoto
                     ? photoH
-                    : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom;
-        sizes.push_back({msgH, (double)th, nameH, replyH, photoW, photoH, msgW, false});
+                    : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom
+                      + ((hasTime && !timeInline && hasText) ? timeH + 2 : 0);
+        sizes.push_back({msgH, (double)th, nameH, replyH, photoW, photoH, msgW, false, timeH, timeInline, hasTime});
         totalH += msgH + 12; // Standard inter-bubble gap (12px)
         g_object_unref(tl); pango_font_description_free(td);
     }
@@ -733,19 +801,20 @@ void Renderer::renderQuote(
             auto color = hexToRGBA(nameColor(msg.senderId));
             cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
             PangoLayout* nl = pango_cairo_create_layout(cr);
-            PangoFontDescription* nd = pango_font_description_from_string("Inter Bold 13");
+            PangoFontDescription* nd = pango_font_description_from_string((kFontFamily + " Bold 13").c_str());
             pango_layout_set_font_description(nl, nd);
             pango_layout_set_text(nl, msg.senderName.c_str(), -1);
             cairo_move_to(cr, bubbleX + kPadLeft, py + kNamePadTop);
             pango_cairo_show_layout(cr, nl);
 
             // ── Emoji Status ─────────────────────────────────────────────
+            // The bubble was widened by (kEmojiStatusGap + kEmojiStatusSize)
+            // in the measure pass, so the badge now always fits inside.
             if (msg.emojiStatusId != 0 && emojiMap.count(msg.emojiStatusId)) {
-                std::cout << "[Renderer] Drawing status emoji: " << msg.emojiStatusId << std::endl;
                 int nw, nh; pango_layout_get_pixel_size(nl, &nw, &nh);
-                drawEmojiSurface(cr, bubbleX + kPadLeft + nw + 4,
-                                 py + kNamePadTop + (nh - 20)/2.0,
-                                 20, emojiMap.at(msg.emojiStatusId));
+                drawEmojiSurface(cr, bubbleX + kPadLeft + nw + kEmojiStatusGap,
+                                 py + kNamePadTop + (nh - kEmojiStatusSize)/2.0,
+                                 kEmojiStatusSize, emojiMap.at(msg.emojiStatusId));
             }
             py += sz.nameH; g_object_unref(nl); pango_font_description_free(nd);
         }
@@ -791,13 +860,21 @@ void Renderer::renderQuote(
                 cairo_stroke(cr);
             }
             cairo_surface_destroy(image);
+
+            // Bare photo (no caption): Telegram overlays the time on the
+            // photo's bottom-right corner.
+            if (barePhotoRender && sz.hasTime) {
+                double tw2 = 0, th2 = 0;
+                measureTimestamp(cr, msg.timeString, tw2, th2);
+                drawTimestamp(cr, px + pw - 6 - tw2, py + ph - 6 - th2, msg.timeString, 0.85);
+            }
             py += sz.mediaH + (barePhotoRender ? 0 : 8);
         }
 
         // ── Text with Inline Emojis (via Pango shape attrs) ───────────────
         if (hasText) {
             PangoLayout* tl = pango_cairo_create_layout(cr);
-            PangoFontDescription* td = pango_font_description_from_string("Inter 14");
+            PangoFontDescription* td = pango_font_description_from_string((kFontFamily + " 14").c_str());
             pango_layout_set_font_description(tl, td);
             pango_layout_set_width(tl, (sz.bubbleW - kPadLeft - kPadRight) * PANGO_SCALE);
             pango_layout_set_wrap(tl, PANGO_WRAP_WORD_CHAR);
@@ -815,6 +892,32 @@ void Renderer::renderQuote(
             cairo_set_source_rgb(cr, 1, 1, 1);
             cairo_move_to(cr, bubbleX + kPadLeft, py);
             pango_cairo_show_layout(cr, tl);
+
+            // ── Timestamp ─────────────────────────────────────────────────
+            // Same geometry decision as the measure pass (same layout width):
+            // inline on the last text line when it fits, otherwise on its own
+            // line at the bubble's bottom-right.
+            if (sz.hasTime) {
+                double tw2 = 0, th2 = 0;
+                measureTimestamp(cr, msg.timeString, tw2, th2);
+                const double tx = bubbleX + sz.bubbleW - kPadRight - tw2;
+                double ty;
+                if (sz.timeInline) {
+                    const int lc = pango_layout_get_line_count(tl);
+                    double yBefore = 0, lastH = 0;
+                    for (int li = 0; li < lc; ++li) {
+                        PangoRectangle e{};
+                        pango_layout_line_get_extents(pango_layout_get_line_readonly(tl, li), nullptr, &e);
+                        const double lh = PANGO_PIXELS_CEIL(e.height);
+                        if (li == lc - 1) lastH = lh; else yBefore += lh;
+                    }
+                    ty = py + yBefore + lastH - th2 - 1;
+                } else {
+                    ty = curY + sz.h - kPadBottom - th2;
+                }
+                drawTimestamp(cr, tx, ty, msg.timeString, 0.45);
+                cairo_set_source_rgb(cr, 1, 1, 1);
+            }
 
             g_object_unref(tl); pango_font_description_free(td);
         }
