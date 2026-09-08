@@ -44,6 +44,31 @@ New test assets: `tests/make_assets.py` (generates offline emoji bitmaps +
 a sample photo), `tests/repro_premium_star.json`, `tests/repro_sinhala.json`,
 `tests/screenshot_replica.json`.
 
+### JPEG avatars & photos fell back to the dummy initials circle
+
+Two independent causes:
+
+1. Cairo only loads PNG. Non-PNG assets were converted by shelling out to
+   ImageMagick (`magick`/`convert`), which is **not installed** in the
+   Docker / HF runtime — so JPEGs never decoded.
+2. `avatarBase64` / `photoBase64` payloads that declare the wrong MIME
+   (real-world case: `data:image/png;base64,/9j/…` — JPEG bytes) were saved
+   with a `.png` extension and then rejected by cairo's PNG loader.
+
+New `src/image_decode.{h,cpp}` (vendored `stb_image.h`, zero new system
+deps) sniffs the actual container and decodes JPEG/PNG/BMP/GIF natively —
+premultiplied ARGB32, straight from the bytes — so a mislabelled JPEG still
+renders as the real avatar. `dwebp`/`ffmpeg` shell-outs remain only for
+webp/tgs/webm/mp4. All four image load sites (avatar, sticker, photo,
+emoji-status badge) now go through `Quote::loadImageSurface()`, which
+keeps cairo's error-surface contract, so every existing fallback behaves
+exactly as before when a file is truly undecodable.
+
+Verified end-to-end: a payload carrying the exact mislabelled JPEG
+(`image/png` MIME, JPEG bytes) now renders the photo avatar instead of the
+initials circle; correct `image/jpeg` payloads and all PNG / emoji /
+Sinhala / timestamp regressions are unchanged.
+
 ## Unreleased — Custom emoji rendering rewrite (tdesktop-style inline glyphs)
 
 ### The bug
