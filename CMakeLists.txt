@@ -45,6 +45,7 @@ set(SOURCES
     src/main.cpp
     src/api_handler.cpp
     src/renderer.cpp
+    src/image_decode.cpp
     src/text_engine.cpp
     src/tg_client.cpp
     src/mtproto/crypto.cpp
