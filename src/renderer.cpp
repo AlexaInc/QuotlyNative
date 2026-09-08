@@ -2,6 +2,7 @@
 // developer hansaka@alexainc
 
 #include "renderer.h"
+#include "image_decode.h"
 #include "style_constants.h"
 #include <cmath>
 #include <iostream>
@@ -60,35 +61,6 @@ static RGBA hexToRGBA(const std::string& hex) {
 }
 
 struct ImageSize { int w=0, h=0; };
-
-static bool fileExists(const std::string& path) {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0 && st.st_size > 0;
-}
-
-static bool endsWith(const std::string& s, const std::string& suffix) {
-    return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
-}
-
-static std::string prepareDrawablePath(const std::string& path) {
-    if (path.empty()) return "";
-    if (endsWith(path, ".png")) return path;
-
-    std::string pngPath = path + ".png";
-    if (fileExists(pngPath)) return pngPath;
-
-    std::string cmd;
-    if (endsWith(path, ".webp")) {
-        cmd = "dwebp \"" + path + "\" -o \"" + pngPath + "\" >/dev/null 2>&1";
-    } else if (endsWith(path, ".jpg") || endsWith(path, ".jpeg") || endsWith(path, ".gif")) {
-        cmd = "(magick \"" + path + "\" \"" + pngPath + "\" || convert \"" + path + "\" \"" + pngPath + "\") >/dev/null 2>&1";
-    } else if (endsWith(path, ".webm") || endsWith(path, ".mp4") || endsWith(path, ".tgs")) {
-        cmd = "ffmpeg -y -i \"" + path + "\" -frames:v 1 \"" + pngPath + "\" >/dev/null 2>&1";
-    }
-
-    if (!cmd.empty()) system(cmd.c_str());
-    return fileExists(pngPath) ? pngPath : path;
-}
 
 static ImageSize getImageSize(const std::string& path) {
     std::string drawable = prepareDrawablePath(path);
@@ -320,9 +292,10 @@ void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size,
     double cx = x + size / 2.0, cy = y + size / 2.0, radius = size / 2.0;
 
     // ── Try drawing the real avatar image first ─────────────────────────
+    // loadImageSurface sniffs the actual container (JPEG payloads mislabeled
+    // as image/png now decode instead of falling back to the initials circle).
     if (!avatarPath.empty()) {
-        std::string drawablePath = prepareDrawablePath(avatarPath);
-        cairo_surface_t* img = cairo_image_surface_create_from_png(drawablePath.c_str());
+        cairo_surface_t* img = loadImageSurface(avatarPath);
         if (cairo_surface_status(img) == CAIRO_STATUS_SUCCESS) {
             double iw = cairo_image_surface_get_width(img);
             double ih = cairo_image_surface_get_height(img);
@@ -462,8 +435,7 @@ void Renderer::drawBubble(cairo_t* cr, double x, double y, double width, double 
 
 static void drawEmojiSurface(cairo_t* cr, double x, double y, double size, const std::string& path) {
     if (path.empty()) return;
-    std::string finalPath = prepareDrawablePath(path);
-    cairo_surface_t* img = cairo_image_surface_create_from_png(finalPath.c_str());
+    cairo_surface_t* img = loadImageSurface(path);
     if (cairo_surface_status(img) == CAIRO_STATUS_SUCCESS) {
         double iw = cairo_image_surface_get_width(img);
         double ih = cairo_image_surface_get_height(img);
@@ -731,8 +703,7 @@ void Renderer::renderQuote(
             double sy = curY + 4;
             double sr = 8;
 
-            std::string drawablePath = prepareDrawablePath(msg.photoPath);
-            cairo_surface_t* image = cairo_image_surface_create_from_png(drawablePath.c_str());
+            cairo_surface_t* image = loadImageSurface(msg.photoPath);
             if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
                 cairo_new_path(cr);
                 cairo_arc(cr, sx + sr, sy + sr, sr, M_PI, 3*M_PI/2);
@@ -841,9 +812,8 @@ void Renderer::renderQuote(
             cairo_arc(cr, px + kPhotoBorderR, py + ph - kPhotoBorderR, kPhotoBorderR, M_PI/2, M_PI);
             cairo_close_path(cr);
 
-            // Draw actual image if available
-            std::string drawablePath = prepareDrawablePath(msg.photoPath);
-            cairo_surface_t* image = cairo_image_surface_create_from_png(drawablePath.c_str());
+            // Draw actual image if available (native JPEG/PNG/GIF/BMP decode)
+            cairo_surface_t* image = loadImageSurface(msg.photoPath);
             if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
                 cairo_save(cr); cairo_clip(cr);
                 cairo_translate(cr, px, py);
