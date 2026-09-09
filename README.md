@@ -131,7 +131,7 @@ See `CHANGELOG.md` for the long-form write-up.
 ```bash
 sudo apt-get install \
     build-essential cmake pkg-config \
-    libcairo2-dev libpango1.0-dev \
+    libcairo2-dev libpango1.0-dev libwebp-dev \
     libssl-dev libboost-system-dev zlib1g-dev \
     nlohmann-json3-dev libasio-dev
 # Crow is header-only:
