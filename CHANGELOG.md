@@ -91,6 +91,30 @@ Verified with two real animated WebP stickers (269 KB multi-frame +
 avatar / photo / Sinhala / premium-badge / timestamp regressions are
 byte-identical to the previous good renders.
 
+### Caption-less media (bare photo / sticker) alignment was broken
+
+Three related defects, all visible when a replied-to message carried a
+photo without caption:
+
+1. **Floating avatar.** The measure pass sized a bare-photo bubble as
+   `photoH` only, while the draw pass stacked `kPadTop + reply header +
+   photo` — so the avatar (anchored to the bubble bottom) floated ~47 px
+   above the photo's bottom edge and the next bubble sat too close.
+2. **Stickers dropped their reply header** entirely (Telegram shows it
+   above bare media).
+3. **Media canvases padded with transparent margins** (bots ship these)
+   made photos look shifted right of the content column.
+
+Fixes: `replyHeight()` is now shared by both passes (40 px with reply
+text, compact 26 px name-only when the replied text is empty — Telegram
+style); bare-photo `msgH = kPadTop + replyH + photoH`; the sticker path
+draws its reply header and offsets the thumbnail below it; decoded
+surfaces are alpha-cropped (`alphaCrop()` in `src/image_decode.cpp`) so
+layout uses the visible content box, and `probeImageSize()` returns the
+cropped dimensions so measure and draw always agree. Undecodable media
+again returns a true cairo error surface (the 1×1 "success" stand-in was
+scaling to a 210×210 invisible hole), restoring the gray placeholder.
+
 ## Unreleased — Custom emoji rendering rewrite (tdesktop-style inline glyphs)
 
 ### The bug
