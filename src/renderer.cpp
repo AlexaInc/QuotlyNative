@@ -62,6 +62,14 @@ static RGBA hexToRGBA(const std::string& hex) {
 
 struct ImageSize { int w=0, h=0; };
 
+// Reply preview height: two lines (name + text) normally, a compact single
+// line when the replied message has no text (Telegram shows name only).
+// MUST be shared by the measure and draw passes so heights never disagree.
+static double replyHeight(const ReplyData& r) {
+    if (!r.hasReply) return 0;
+    return (r.text.empty() && r.pangoMarkup.empty()) ? 26 : 40;
+}
+
 static ImageSize getImageSize(const std::string& path) {
     DecodedSize ds = probeImageSize(path);   // PNG / JPEG / WebP (incl. animated)
     return {ds.w, ds.h};
@@ -328,11 +336,12 @@ void Renderer::drawAvatar(cairo_t* cr, double x, double y, double size,
 void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const ReplyData& reply, const std::map<uint64_t, std::string>& emojiMap) {
     if (!reply.hasReply) return;
     using namespace Style;
+    const double h = replyHeight(reply);
 
     // Accent line
     auto color = hexToRGBA(nameColor(reply.senderId));
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
-    cairo_rectangle(cr, x, y, 2, 35);
+    cairo_rectangle(cr, x, y, 2, h - 5);
     cairo_fill(cr);
 
     // Name
@@ -344,28 +353,34 @@ void Renderer::drawReply(cairo_t* cr, double x, double y, double width, const Re
     cairo_move_to(cr, x + 8, y + 2);
     pango_cairo_show_layout(cr, nl);
 
-    // Text
-    PangoLayout* tl = pango_cairo_create_layout(cr);
-    PangoFontDescription* td = pango_font_description_from_string((kFontFamily + " 12").c_str());
-    pango_layout_set_font_description(tl, td);
-    pango_layout_set_width(tl, (width - 12) * PANGO_SCALE);
-    pango_layout_set_ellipsize(tl, PANGO_ELLIPSIZE_END);
-    if (!reply.pangoMarkup.empty()) pango_layout_set_markup(tl, reply.pangoMarkup.c_str(), -1);
-    else pango_layout_set_text(tl, reply.text.c_str(), -1);
+    // Text (skipped entirely for text-less replies — compact mode)
+    const bool hasReplyText = !reply.text.empty() || !reply.pangoMarkup.empty();
+    if (hasReplyText) {
+        PangoLayout* tl = pango_cairo_create_layout(cr);
+        PangoFontDescription* td = pango_font_description_from_string((kFontFamily + " 12").c_str());
+        pango_layout_set_font_description(tl, td);
+        pango_layout_set_width(tl, (width - 12) * PANGO_SCALE);
+        pango_layout_set_ellipsize(tl, PANGO_ELLIPSIZE_END);
+        if (!reply.pangoMarkup.empty()) pango_layout_set_markup(tl, reply.pangoMarkup.c_str(), -1);
+        else pango_layout_set_text(tl, reply.text.c_str(), -1);
 
-    // Inline custom emojis: 16px in reply previews to match Telegram's
-    // compact reply card. Shape attrs make Pango reserve real space, so
-    // ellipsis falls *after* the emoji box if the emoji is past the cutoff,
-    // and the bitmap is painted by Pango itself (no manual positioning).
-    attachCustomEmojiShapes(tl, reply.text, reply.customEmojis, 16.0, emojiMap);
-    installShapeRenderer(tl);
+        // Inline custom emojis: 16px in reply previews to match Telegram's
+        // compact reply card. Shape attrs make Pango reserve real space, so
+        // ellipsis falls *after* the emoji box if the emoji is past the cutoff,
+        // and the bitmap is painted by Pango itself (no manual positioning).
+        attachCustomEmojiShapes(tl, reply.text, reply.customEmojis, 16.0, emojiMap);
+        installShapeRenderer(tl);
 
-    cairo_set_source_rgba(cr, 0.8, 0.8, 0.8, 0.8);
-    cairo_move_to(cr, x + 8, y + 18);
-    pango_cairo_show_layout(cr, tl);
+        cairo_set_source_rgba(cr, 0.8, 0.8, 0.8, 0.8);
+        cairo_move_to(cr, x + 8, y + 18);
+        pango_cairo_show_layout(cr, tl);
 
-    pango_font_description_free(nd); pango_font_description_free(td);
-    g_object_unref(nl); g_object_unref(tl);
+        pango_font_description_free(td);
+        g_object_unref(tl);
+    }
+
+    pango_font_description_free(nd);
+    g_object_unref(nl);
 }
 
 // ── drawBubble ────────────────────────────────────────────────────────────────
@@ -484,9 +499,11 @@ void Renderer::renderQuote(
             double sw = 0, sh = 0;
             fitMediaIntoBounds(isz, kStickerMaxW, kStickerMaxH, kStickerMinW,
                                kStickerMaxW, kStickerMaxH, sw, sh);
-            sizes.push_back({sh + 8, 0, 0, 0, sw, sh, sw, true, 0, false, false});
+            const double rh = replyHeight(msg.reply);
+            sizes.push_back({rh + sh + 8, 0, 0, rh, sw, sh, sw, true, 0, false, false});
             maxW = std::max(maxW, sw + kPadLeft + kPadRight);
-            totalH += (sh + 8) + 8; // inter-message gap
+            if (rh > 0) maxW = std::max(maxW, 150.0 + kPadLeft + kPadRight);
+            totalH += (rh + sh + 8) + 8; // inter-message gap
             continue;
         }
 
@@ -529,7 +546,7 @@ void Renderer::renderQuote(
             }
         }
 
-        double replyH = msg.reply.hasReply ? 40 : 0;
+        double replyH = replyHeight(msg.reply);
         double photoH = 0;
         double photoW = 0;
         ImageSize photoSize;
@@ -624,8 +641,12 @@ void Renderer::renderQuote(
             }
         }
 
+        // Bare (caption-less) media stacks kPadTop + reply header + the photo
+        // itself inside msgH — the draw pass does exactly that, and the
+        // avatar is anchored to the bubble bottom, so leaving replyH out used
+        // to float the avatar ~47 px above the photo's bottom edge.
         double msgH = barePHoto
-                    ? photoH
+                    ? kPadTop + replyH + photoH
                     : kPadTop + nameH + replyH + (hasText ? th : 0) + (photoH > 0 ? photoH + 8 : 0) + kPadBottom
                       + ((hasTime && !timeInline && hasText) ? timeH + 2 : 0);
         sizes.push_back({msgH, (double)th, nameH, replyH, photoW, photoH, msgW, false, timeH, timeInline, hasTime});
@@ -668,10 +689,16 @@ void Renderer::renderQuote(
                 drawAvatar(cr, kCanvasPad, avatarY, kAvatarSize, msg.senderName, msg.senderId, msg.avatarPath);
             }
 
+            // Telegram shows the reply header above bare media too.
+            if (sz.replyH > 0) {
+                drawReply(cr, bubbleX + kPadLeft, curY + kPadTop,
+                          sz.bubbleW - kPadLeft - kPadRight, msg.reply, emojiMap);
+            }
+
             double sw = sz.mediaW;
             double sh = sz.mediaH;
             double sx = bubbleX;
-            double sy = curY + 4;
+            double sy = curY + kPadTop + sz.replyH;
             double sr = 8;
 
             cairo_surface_t* image = loadImageSurface(msg.photoPath);

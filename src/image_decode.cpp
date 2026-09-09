@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <vector>
 #include <sys/stat.h>
 
@@ -60,7 +61,7 @@ static bool isWebpMagic(const std::vector<unsigned char>& b) {
 // RGBA (straight alpha) → cairo premultiplied native-endian ARGB32.
 static cairo_surface_t* surfaceFromRGBA(const unsigned char* px, int w, int h) {
     if (!px || w <= 0 || h <= 0) {
-        return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
     }
     const int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, w);
     cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
@@ -93,7 +94,7 @@ static cairo_surface_t* surfaceFromStb(const std::string& path) {
     if (!px) {
         // error surface — callers check cairo_surface_status(), same contract
         // as cairo_image_surface_create_from_png()
-        return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
     }
     cairo_surface_t* surf = surfaceFromRGBA(px, w, h);
     stbi_image_free(px);
@@ -107,7 +108,7 @@ static cairo_surface_t* surfaceFromWebp(const std::vector<unsigned char>& bytes)
     cairo_surface_t* err = nullptr;
     WebPData wpd{bytes.data(), bytes.size()};
     WebPDemuxer* demux = WebPDemux(&wpd);
-    if (!demux) return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    if (!demux) return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
 
     WebPIterator it;
     if (WebPDemuxGetFrame(demux, 1, &it)) {
@@ -121,90 +122,84 @@ static cairo_surface_t* surfaceFromWebp(const std::vector<unsigned char>& bytes)
     }
     WebPDemuxDelete(demux);
     if (err) return err;
-    return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
+}
+
+// Crop fully-transparent margins (bots frequently ship media canvases padded
+// with alpha=0 — that made photos look shifted inside the quote). The same
+// function is used by probeImageSize(), so the measure and draw passes always
+// agree on the cropped dimensions.
+static cairo_surface_t* alphaCrop(cairo_surface_t* s) {
+    if (cairo_surface_status(s) != CAIRO_STATUS_SUCCESS ||
+        cairo_image_surface_get_format(s) != CAIRO_FORMAT_ARGB32) return s;
+    const int w = cairo_image_surface_get_width(s);
+    const int h = cairo_image_surface_get_height(s);
+    const int stride = cairo_image_surface_get_stride(s);
+    const unsigned char* data = cairo_image_surface_get_data(s);
+    int x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (int y = 0; y < h; ++y) {
+        const unsigned char* row = data + (size_t)y * stride;
+        for (int x = 0; x < w; ++x) {
+            if (row[x * 4 + 3] != 0) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+        }
+    }
+    if (x1 < 0 || (x0 == 0 && y0 == 0 && x1 == w - 1 && y1 == h - 1)) return s;
+    const int cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+    cairo_surface_t* c = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, cw, ch);
+    if (cairo_surface_status(c) != CAIRO_STATUS_SUCCESS) { cairo_surface_destroy(c); return s; }
+    unsigned char* cd = cairo_image_surface_get_data(c);
+    const int cstride = cairo_image_surface_get_stride(c);
+    for (int y = 0; y < ch; ++y)
+        memcpy(cd + (size_t)y * cstride,
+               data + (size_t)(y0 + y) * stride + x0 * 4, (size_t)cw * 4);
+    cairo_surface_mark_dirty(c);
+    cairo_surface_destroy(s);
+    return c;
 }
 
 cairo_surface_t* loadImageSurface(const std::string& path) {
-    if (path.empty()) return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    if (path.empty()) return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
 
     const std::string drawable = prepareDrawablePath(path);
 
     // Animated/video containers that could not be converted are unsupported.
     if (endsWith(drawable, ".webm") || endsWith(drawable, ".mp4") || endsWith(drawable, ".tgs")) {
-        return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
     }
 
     // Sniff the real container — payloads frequently mislabel MIME types.
     std::vector<unsigned char> head = readFile(drawable);
-    if (head.empty()) return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    if (head.empty()) return cairo_image_surface_create(CAIRO_FORMAT_ARGB32, -1, -1);
 
-    if (isWebpMagic(head)) return surfaceFromWebp(head);
+    if (isWebpMagic(head)) return alphaCrop(surfaceFromWebp(head));
 
     if (endsWith(drawable, ".png") ||
         (head.size() >= 8 && !memcmp(head.data(), "\x89PNG\r\n\x1a\n", 8))) {
         cairo_surface_t* s = cairo_image_surface_create_from_png(drawable.c_str());
-        if (cairo_surface_status(s) == CAIRO_STATUS_SUCCESS) return s;
+        if (cairo_surface_status(s) == CAIRO_STATUS_SUCCESS) return alphaCrop(s);
         cairo_surface_destroy(s);
         // Fall through: file claims .png but may hold JPEG bytes — stb sniffs.
     }
 
-    return surfaceFromStb(drawable);
+    return alphaCrop(surfaceFromStb(drawable));
 }
 
+// Dimensions of the *drawable* surface (after alpha-margin crop), so the
+// measure pass lays out exactly what the draw pass will paint.
 DecodedSize probeImageSize(const std::string& path) {
-    const std::string drawable = prepareDrawablePath(path);
-    std::vector<unsigned char> b = readFile(drawable);
-    if (b.size() < 12) return {0, 0};
-
-    // WebP (static or animated): canvas size from the demuxer.
-    if (isWebpMagic(b)) {
-        WebPData wpd{b.data(), b.size()};
-        WebPDemuxer* demux = WebPDemux(&wpd);
-        if (!demux) return {0, 0};
-        DecodedSize sz{(int)WebPDemuxGetI(demux, WEBP_FF_CANVAS_WIDTH),
-                       (int)WebPDemuxGetI(demux, WEBP_FF_CANVAS_HEIGHT)};
-        WebPDemuxDelete(demux);
-        return sz;
+    cairo_surface_t* s = loadImageSurface(path);
+    DecodedSize sz{0, 0};
+    if (cairo_surface_status(s) == CAIRO_STATUS_SUCCESS) {
+        sz.w = cairo_image_surface_get_width(s);
+        sz.h = cairo_image_surface_get_height(s);
     }
-
-    // PNG
-    if (!memcmp(b.data(), "\x89PNG\r\n\x1a\n", 8) && b.size() >= 24) {
-        DecodedSize sz;
-        sz.w = (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19];
-        sz.h = (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23];
-        return sz;
-    }
-
-    // JPEG: walk markers to the SOF frame header.
-    if (b[0] == 0xFF && b[1] == 0xD8) {
-        FILE* f = fopen(drawable.c_str(), "rb");
-        if (!f) return {0, 0};
-        fseek(f, 2, SEEK_SET);
-        DecodedSize sz{0, 0};
-        while (true) {
-            uint8_t marker[2];
-            if (fread(marker, 1, 2, f) < 2) break;
-            if (marker[0] != 0xFF) break;
-            if (marker[1] >= 0xC0 && marker[1] <= 0xC3) {
-                fseek(f, 3, SEEK_CUR);
-                uint8_t d[4];
-                if (fread(d, 1, 4, f) == 4) {
-                    sz.h = (d[0] << 8) | d[1];
-                    sz.w = (d[2] << 8) | d[3];
-                }
-                break;
-            } else {
-                uint8_t l[2];
-                if (fread(l, 1, 2, f) < 2) break;
-                int len = (l[0] << 8) | l[1];
-                fseek(f, len - 2, SEEK_CUR);
-            }
-        }
-        fclose(f);
-        return sz;
-    }
-
-    return {0, 0};
+    cairo_surface_destroy(s);
+    return sz;
 }
 
 } // namespace Quote
