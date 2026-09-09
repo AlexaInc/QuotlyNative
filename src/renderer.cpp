@@ -63,37 +63,8 @@ static RGBA hexToRGBA(const std::string& hex) {
 struct ImageSize { int w=0, h=0; };
 
 static ImageSize getImageSize(const std::string& path) {
-    std::string drawable = prepareDrawablePath(path);
-    FILE* f = fopen(drawable.c_str(), "rb");
-    if (!f) return {0,0};
-    uint8_t buf[32];
-    if (fread(buf, 1, 32, f) < 8) { fclose(f); return {0,0}; }
-    ImageSize res = {0,0};
-    if (buf[0]==0x89 && buf[1]=='P' && buf[2]=='N' && buf[3]=='G') {
-        fseek(f, 16, SEEK_SET);
-        uint8_t d[8]; fread(d, 1, 8, f);
-        res.w = (d[0]<<24)|(d[1]<<16)|(d[2]<<8)|d[3];
-        res.h = (d[4]<<24)|(d[5]<<16)|(d[6]<<8)|d[7];
-    } else if (buf[0]==0xFF && buf[1]==0xD8) {
-        fseek(f, 2, SEEK_SET);
-        while (true) {
-            uint8_t marker[2]; if (fread(marker, 1, 2, f) < 2) break;
-            if (marker[0] != 0xFF) break;
-            if (marker[1] >= 0xC0 && marker[1] <= 0xC3) {
-                fseek(f, 3, SEEK_CUR);
-                uint8_t d[4]; fread(d, 1, 4, f);
-                res.h = (d[0]<<8)|d[1];
-                res.w = (d[2]<<8)|d[3];
-                break;
-            } else {
-                uint8_t l[2]; fread(l, 1, 2, f);
-                int len = (l[0]<<8)|l[1];
-                fseek(f, len - 2, SEEK_CUR);
-            }
-        }
-    }
-    fclose(f);
-    return res;
+    DecodedSize ds = probeImageSize(path);   // PNG / JPEG / WebP (incl. animated)
+    return {ds.w, ds.h};
 }
 
 static void fitMediaIntoBounds(const ImageSize& isz, double maxW, double maxH,

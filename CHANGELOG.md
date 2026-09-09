@@ -69,6 +69,28 @@ Verified end-to-end: a payload carrying the exact mislabelled JPEG
 initials circle; correct `image/jpeg` payloads and all PNG / emoji /
 Sinhala / timestamp regressions are unchanged.
 
+### WebP stickers rendered as a blank/black box
+
+Stickers sent as `mediaBase64` with `image/webp` (both static WebP and
+animated WebP from the Telegram sticker bot) produced an empty quote: the
+old pipeline relied on shelling out to `dwebp`/ImageMagick, which is not
+installed in the runtime — the conversion silently failed and the sticker
+surface fell back to the error placeholder.
+
+WebP is now decoded **natively** via libwebp + libwebpdemux
+(`src/image_decode.cpp`): the demuxer hands over frame 1 — always a full
+keyframe — so animated WebP stickers render their first frame exactly as
+requested, and static WebP (a one-frame container) uses the same path with
+correct alpha. `probeImageSize()` reads the WebP canvas dimensions so
+sticker bubbles keep the right aspect ratio. The `dwebp` shell-out is gone;
+CMake links `libwebp libwebpdemux`, the Docker runtime installs
+`libwebp7 libwebpdemux2`, and the README build deps gained `libwebp-dev`.
+
+Verified with two real animated WebP stickers (269 KB multi-frame +
+46 KB single-frame): both render their first frame with transparency;
+avatar / photo / Sinhala / premium-badge / timestamp regressions are
+byte-identical to the previous good renders.
+
 ## Unreleased — Custom emoji rendering rewrite (tdesktop-style inline glyphs)
 
 ### The bug

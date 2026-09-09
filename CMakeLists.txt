@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CAIRO REQUIRED cairo)
 pkg_check_modules(PANGO REQUIRED pango pangocairo)
+pkg_check_modules(WEBP REQUIRED libwebp libwebpdemux)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
@@ -34,6 +35,7 @@ endif()
 include_directories(
     ${CAIRO_INCLUDE_DIRS}
     ${PANGO_INCLUDE_DIRS}
+    ${WEBP_INCLUDE_DIRS}
     ${CROW_INCLUDE_DIR}
     ${ASIO_INCLUDE_DIR}
     ${NLOHMANN_INCLUDE_DIR}
@@ -62,6 +64,7 @@ add_executable(QuoteAPI ${SOURCES})
 target_link_libraries(QuoteAPI
     ${CAIRO_LIBRARIES}
     ${PANGO_LIBRARIES}
+    ${WEBP_LIBRARIES}
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto

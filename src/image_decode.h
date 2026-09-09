@@ -26,6 +26,14 @@ std::string prepareDrawablePath(const std::string& path);
 // Load any supported image into a cairo ARGB32 surface (premultiplied).
 // Never returns nullptr — check cairo_surface_status() on the result, exactly
 // like surfaces created by cairo_image_surface_create_from_png().
+// Supported natively: PNG, JPEG, BMP, GIF (stb_image) and WebP incl. the
+// first frame of *animated* WebP stickers (libwebp demux).
 cairo_surface_t* loadImageSurface(const std::string& path);
+
+struct DecodedSize { int w = 0, h = 0; };
+
+// Pixel dimensions of the image without fully decoding it (webp canvas,
+// PNG IHDR, JPEG SOF). {0,0} when unknown.
+DecodedSize probeImageSize(const std::string& path);
 
 } // namespace Quote
